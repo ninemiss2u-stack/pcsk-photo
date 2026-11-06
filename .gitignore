@@ -1,0 +1,7 @@
+# ไฟล์ตั้งค่าเครื่องมือพัฒนา (ไม่ใช่ส่วนของโปรแกรม)
+.claude/
+
+# ไฟล์ระบบ Windows / macOS
+Thumbs.db
+desktop.ini
+.DS_Store

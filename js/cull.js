@@ -1,0 +1,776 @@
+(function () {
+  const cfg = window.APP_CONFIG || {};
+  const Core = window.CullCore;
+  const WM = window.PCSKWatermark;
+  const $ = id => document.getElementById(id);
+
+  const IMG_RE = /\.(jpe?g|png|webp)$/i;
+  const RAW_RE = /\.(cr2|cr3|nef|nrw|arw|srf|sr2|raf|orf|rw2|pef|dng|srw|x3f)$/i;
+  const VIDEO_RE = /\.(mp4|mov|avi|mts|m2ts|mkv|3gp)$/i;
+  const HEIC_RE = /\.(heic|heif)$/i;
+
+  // ความไว: h = จำนวนบิตที่ต่างกันได้ (จาก 64), c = ความต่างของสีเฉลี่ย (0-255)
+  const SENS = { 1: { h: 7, c: 16, label: 'น้อย (เฉพาะภาพที่เหมือนกันมาก)' },
+    2: { h: 11, c: 24, label: 'ปานกลาง' },
+    3: { h: 15, c: 32, label: 'มาก (รวมภาพที่คล้ายกันด้วย)' } };
+  const MAX_GAP = 15 * 60 * 1000; // ภาพที่ถ่ายห่างกันเกิน 15 นาที ไม่นับเป็นภาพซ้ำ
+
+  const state = {
+    photos: [], byId: new Map(), raws: new Map(), groups: [], overrides: new Map(),
+    settings: { keep: 1, sens: 2, dropBlur: true }, filter: 'all', view: [],
+    cancelled: false, skipped: null, failed: 0, total: 0
+  };
+  const WM_DEFAULT = { on: true, style: 'corner', pos: 'br', size: 'm', opacity: 85 };
+  const ENH_DEFAULT = { on: true, level: 'mid' };
+  try { Object.assign(state.settings, JSON.parse(localStorage.getItem('cull-settings') || '{}')); } catch (e) { /* ไม่มีที่เก็บก็ใช้ค่าเริ่มต้น */ }
+  state.settings.wm = Object.assign({}, WM_DEFAULT, state.settings.wm);
+  if (!WM.STYLES.includes(state.settings.wm.style)) state.settings.wm.style = WM_DEFAULT.style; // ค่าจากลายน้ำแบบเดิม
+  state.settings.enh = Object.assign({}, ENH_DEFAULT, state.settings.enh);
+  const wmOpts = () => (state.settings.wm.on ? state.settings.wm : null);
+  const enhLevel = () => (state.settings.enh.on ? state.settings.enh.level : null);
+  const saveSettings = () => { try { localStorage.setItem('cull-settings', JSON.stringify(state.settings)); } catch (e) { /* ignore */ } };
+
+  // ---------- helpers ----------
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const num = n => n.toLocaleString('th-TH');
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const fmtTime = t => new Date(t).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' });
+  const relPath = f => f._path || f.webkitRelativePath || f.name;
+  const stemKey = p => p.replace(/\.[^./\\]+$/, '').toLowerCase();
+  const fmtSize = b => b > 1e9 ? (b / 1e9).toFixed(1) + ' GB' : Math.round(b / 1e6) + ' MB';
+
+  function toast(msg, type) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.className = 'toast show' + (type ? ' ' + type : '');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => { t.className = 'toast'; }, 4000);
+  }
+  const STEPS = ['stepStart', 'stepProgress', 'stepResults'];
+  function show(step) {
+    STEPS.forEach(id => { $(id).hidden = id !== step; });
+    const at = STEPS.indexOf(step);
+    document.querySelectorAll('#stepper li').forEach((li, i) => {
+      li.classList.toggle('on', i === at);
+      li.classList.toggle('done', i < at);
+    });
+    window.scrollTo(0, 0);
+  }
+  show('stepStart');
+
+  // ---------- ตราโรงเรียนและลายน้ำตัวอย่าง ----------
+  $('schoolName').textContent = cfg.SCHOOL_NAME || 'งานประชาสัมพันธ์';
+  $('footSchool').textContent = cfg.SCHOOL_NAME || '';
+
+  const sampleScene = WM.sampleScene(1200, 800);
+  const drawSample = () => WM.renderPreview($('sampleCanvas'), sampleScene, state.settings.wm.on ? state.settings.wm : WM_DEFAULT);
+  drawSample();
+  WM.loadLogo('img/logo.webp').then(c => {
+    // ใช้ตราที่ตัดขอบเป็นวงกลมแล้วแทนไฟล์ต้นฉบับทุกจุดบนหน้า
+    const url = c.toDataURL('image/png');
+    document.querySelectorAll('.logo-img').forEach(img => { img.src = url; img.classList.remove('raw'); });
+    drawSample();
+    if (!$('stepResults').hidden) drawWmPreview();
+  }).catch(e => console.warn('ตัดขอบตราโรงเรียนไม่ได้ (ควรเปิดผ่าน serve.ps1)', e));
+  WM.loadMark('img/pcsk-photo.webp').then(c => {
+    // โลโก้ PCSK PHOTO พื้นโปร่งใส ใช้ทั้งในลายน้ำและบนหัวส่วนต้อนรับ
+    const bm = $('brandMark');
+    bm.src = c.toDataURL('image/png');
+    bm.hidden = false;
+    $('eyebrow').hidden = true;
+    drawSample();
+    if (!$('stepResults').hidden) drawWmPreview();
+  }).catch(e => console.warn('ใช้โลโก้ลายน้ำไม่ได้ จะใช้ลายน้ำแบบตัวอักษรแทน (ควรเปิดผ่าน serve.ps1)', e));
+
+  // ---------- เลือกไฟล์ ----------
+
+  $('pickFolder').onclick = () => $('folderInput').click();
+  $('pickFiles').onclick = () => $('fileInput').click();
+  $('folderInput').onchange = e => { const f = [...e.target.files]; e.target.value = ''; startWith(f); };
+  $('fileInput').onchange = e => { const f = [...e.target.files]; e.target.value = ''; startWith(f); };
+
+  const drop = $('drop');
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', async e => {
+    const entries = [...e.dataTransfer.items].filter(i => i.kind === 'file')
+      .map(i => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null)).filter(Boolean);
+    const plain = [...e.dataTransfer.files];
+    startWith(entries.length ? await filesFromEntries(entries) : plain);
+  });
+
+  async function filesFromEntries(entries) {
+    const out = [];
+    const walk = async (entry, path) => {
+      if (entry.isFile) {
+        const f = await new Promise((res, rej) => entry.file(res, rej));
+        f._path = path + f.name;
+        out.push(f);
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        let batch;
+        do {
+          batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+          for (const child of batch) await walk(child, path + entry.name + '/');
+        } while (batch.length);
+      }
+    };
+    for (const entry of entries) await walk(entry, '');
+    return out;
+  }
+
+  async function startWith(files) {
+    const seen = new Set();
+    const images = [], heics = [];
+    const skipped = { raw: 0, video: 0, heic: 0, other: 0 };
+    state.raws = new Map();
+    for (const f of files) {
+      if (f.name.startsWith('.')) continue; // ไฟล์ระบบที่ซ่อนอยู่
+      const p = relPath(f);
+      const key = p + '|' + f.size;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (IMG_RE.test(f.name)) images.push(f);
+      else if (HEIC_RE.test(f.name)) heics.push(f);
+      else if (RAW_RE.test(f.name)) { skipped.raw++; state.raws.set(stemKey(p), f); }
+      else if (VIDEO_RE.test(f.name)) skipped.video++;
+      else skipped.other++;
+    }
+    if (heics.length) {
+      const r = await convertHeics(heics);
+      images.push(...r.out);
+      skipped.heic = r.failed;
+    }
+    if (!images.length) {
+      show('stepStart');
+      toast(skipped.heic ? 'แปลงไฟล์ HEIC ไม่สำเร็จ ตรวจการเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่'
+        : skipped.raw ? 'พบเฉพาะไฟล์ RAW ระบบนี้ต้องใช้ไฟล์ JPG (ตั้งกล้องให้ถ่าย RAW+JPG)'
+        : 'ไม่พบไฟล์รูป JPG, PNG, WebP หรือ HEIC', 'error');
+      return;
+    }
+    state.skipped = skipped;
+    analyzeAll(images);
+  }
+
+  // แปลงไฟล์ HEIC จาก iPhone เป็น JPG ก่อนวิเคราะห์ (กดหยุดได้ ระบบจะใช้เฉพาะไฟล์ที่แปลงแล้ว)
+  async function convertHeics(list) {
+    resetResults();
+    show('stepProgress');
+    state.cancelled = false;
+    const n = list.length;
+    const out = [];
+    let failed = 0;
+    const t0 = performance.now();
+    const update = i => {
+      $('pTitle').textContent = 'กำลังแปลงไฟล์ HEIC จาก iPhone...';
+      $('pBar').style.width = (i / n * 100) + '%';
+      $('pText').textContent = `แปลงแล้ว ${num(i)} จาก ${num(n)} ไฟล์` + (failed ? ` (แปลงไม่ได้ ${failed})` : '');
+      const left = i > 1 ? (performance.now() - t0) / i * (n - i) / 1000 : 0;
+      $('pEta').textContent = i > 1 && i < n ? (left > 90 ? `เหลือประมาณ ${Math.ceil(left / 60)} นาที` : `เหลือประมาณ ${Math.ceil(left)} วินาที`) : '';
+    };
+    update(0);
+    try { await PCSKHeic.load(); }
+    catch (e) { toast(e.message, 'error'); return { out, failed: n }; }
+    for (let i = 0; i < n && !state.cancelled; i++) {
+      try { out.push(await PCSKHeic.toJpeg(list[i])); }
+      catch (e) { failed++; console.warn('แปลง HEIC ไม่ได้', list[i].name, e); }
+      update(i + 1);
+    }
+    return { out, failed: n - out.length };
+  }
+
+  // ---------- วิเคราะห์ (ใช้ Web Worker หลายตัวถ้าทำได้) ----------
+  function makeWorkers(n) {
+    const list = [];
+    try { for (let i = 0; i < n; i++) list.push(new Worker('js/cull-worker.js')); }
+    catch (e) { list.forEach(w => w.terminate()); return null; } // เช่น เปิดไฟล์ตรงจากเครื่อง (file://)
+    return list.map(w => {
+      let broken = false, seq = 0;
+      const pending = new Map();
+      w.onmessage = e => {
+        const { id, ok, r, error } = e.data;
+        const p = pending.get(id);
+        if (!p) return;
+        pending.delete(id);
+        if (ok) p.res(r); else p.rej(new Error(error));
+      };
+      w.onerror = e => {
+        e.preventDefault();
+        broken = true;
+        pending.forEach(p => p.fallback());
+        pending.clear();
+      };
+      return {
+        terminate: () => w.terminate(),
+        run(file) {
+          if (broken) return Core.analyzeFile(file);
+          return new Promise((res, rej) => {
+            const id = ++seq;
+            pending.set(id, { res, rej, fallback: () => Core.analyzeFile(file).then(res, rej) });
+            w.postMessage({ id, file });
+          });
+        }
+      };
+    });
+  }
+
+  async function analyzeAll(files) {
+    resetResults();
+    show('stepProgress');
+    $('pTitle').textContent = 'กำลังวิเคราะห์รูป...';
+    state.cancelled = false;
+    const total = files.length;
+    const results = new Array(total);
+    let done = 0, failed = 0, next = 0;
+    const t0 = performance.now();
+
+    const update = () => {
+      $('pBar').style.width = (done / total * 100) + '%';
+      $('pText').textContent = `วิเคราะห์แล้ว ${num(done)} จาก ${num(total)} รูป` + (failed ? ` (เปิดไม่ได้ ${failed})` : '');
+      if (done > 3 && done < total) {
+        const left = (performance.now() - t0) / done * (total - done) / 1000;
+        $('pEta').textContent = left > 90 ? `เหลือประมาณ ${Math.ceil(left / 60)} นาที` : `เหลือประมาณ ${Math.ceil(left)} วินาที`;
+      } else $('pEta').textContent = '';
+    };
+    update();
+
+    const nWorkers = clamp((navigator.hardwareConcurrency || 4) - 1, 1, 6);
+    const workers = makeWorkers(nWorkers);
+    const loop = async analyze => {
+      while (!state.cancelled && next < total) {
+        const i = next++;
+        try { results[i] = await analyze(files[i]); }
+        catch (e) { failed++; console.warn('analyze failed', files[i].name, e); }
+        done++;
+        update();
+      }
+    };
+    await Promise.all(workers ? workers.map(w => loop(f => w.run(f))) : [loop(Core.analyzeFile), loop(Core.analyzeFile)]);
+    if (workers) workers.forEach(w => w.terminate());
+
+    results.forEach((r, i) => {
+      if (!r) return;
+      const f = files[i];
+      const p = Object.assign({}, r, {
+        id: i, file: f, name: f.name, path: relPath(f),
+        time: r.taken || f.lastModified, thumbUrl: URL.createObjectURL(r.thumb)
+      });
+      delete p.thumb;
+      state.photos.push(p);
+      state.byId.set(i, p);
+    });
+    state.failed = failed;
+    state.total = total;
+
+    if (!state.photos.length) {
+      show('stepStart');
+      return toast('อ่านรูปไม่ได้เลย ลองใช้ Chrome หรือ Edge รุ่นล่าสุด', 'error');
+    }
+    recompute();
+    show('stepResults');
+    renderAll();
+  }
+  $('cancel').onclick = () => { state.cancelled = true; };
+
+  function resetResults() {
+    state.photos.forEach(p => URL.revokeObjectURL(p.thumbUrl));
+    state.photos = [];
+    state.byId = new Map();
+    state.groups = [];
+    state.overrides = new Map();
+    state.filter = 'all';
+    wmPv.id = null;
+    wmPv.bmp = null;
+  }
+
+  // ---------- จัดกลุ่มและให้คะแนน ----------
+  function hamming(a, b) { let d = 0; for (let i = 0; i < 64; i++) if (a[i] !== b[i]) d++; return d; }
+  // เทียบสีหลังปรับความสว่างให้เท่ากัน เพื่อให้ภาพเดียวกันที่ถ่ายมืด/สว่างต่างกันยังนับเป็นภาพซ้ำ
+  function colorDist(a, b) {
+    const ka = 128 / Math.max(8, a.mean), kb = 128 / Math.max(8, b.mean);
+    let s = 0;
+    for (let i = 0; i < a.colors.length; i++) s += Math.abs(Math.min(255, a.colors[i] * ka) - Math.min(255, b.colors[i] * kb));
+    return s / a.colors.length;
+  }
+  function isSimilar(a, b, s) {
+    if (Math.abs(a.time - b.time) > MAX_GAP) return false;
+    return hamming(a.hash, b.hash) <= s.h && colorDist(a, b) <= s.c;
+  }
+  const byTime = (a, b) => a.time - b.time || a.path.localeCompare(b.path, undefined, { numeric: true });
+
+  function recompute() {
+    const P = state.photos;
+    // ความคมชัดเทียบกับคอนทราสต์ของภาพ เพื่อไม่ให้ภาพมืดถูกมองว่าเบลอ
+    P.forEach(p => { p.focus = p.sharp / (p.std * p.std + 25); });
+    const sharps = P.map(p => p.focus).sort((a, b) => a - b);
+    const med = sharps[Math.floor(sharps.length / 2)];
+    const p90 = sharps[Math.min(sharps.length - 1, Math.floor(sharps.length * 0.9))];
+    const lp90 = Math.log1p(p90) || 1;
+
+    for (const p of P) {
+      const sharpN = Math.min(1, Math.log1p(p.focus) / lp90);
+      const exposure = clamp(1 - Math.abs(p.mean - 120) / 160 - p.clipHi * 2 - p.clipLo * 1.5, 0, 1);
+      const contrast = Math.min(1, p.std / 60);
+      const colorful = Math.min(1, p.colorful / 70);
+      p.score = Math.round(100 * (0.55 * sharpN + 0.25 * exposure + 0.1 * contrast + 0.1 * colorful));
+      p.blurry = P.length >= 5 && p.focus < med * 0.3; // คมน้อยกว่า 30% ของภาพส่วนใหญ่ในชุด
+      p.dark = p.mean < 50 || p.clipLo > 0.4;
+      p.bright = p.mean > 210 || p.clipHi > 0.25;
+    }
+
+    // จัดกลุ่มตามลำดับเวลาที่ถ่าย: ภาพที่คล้ายกับภาพล่าสุดในกลุ่มจะถูกรวมเข้ากลุ่มเดียวกัน
+    const s = SENS[state.settings.sens];
+    const groups = [];
+    let cur = null;
+    for (const p of [...P].sort(byTime)) {
+      if (cur && cur.slice(-4).some(q => isSimilar(p, q, s))) cur.push(p);
+      else { cur = [p]; groups.push(cur); }
+    }
+
+    groups.forEach((g, gi) => {
+      const ranked = [...g].sort((a, b) => b.score - a.score);
+      let kept = 0;
+      ranked.forEach((p, ri) => {
+        p.group = gi;
+        p.best = g.length > 1 && ri === 0;
+        let auto = true, reason = '';
+        if (state.settings.dropBlur && p.blurry) { auto = false; reason = 'ภาพเบลอ'; }
+        else if (kept >= state.settings.keep) { auto = false; reason = 'ภาพซ้ำ มีภาพที่ดีกว่าในกลุ่มนี้'; }
+        if (auto) kept++;
+        p.auto = auto;
+        p.reason = reason;
+        p.keep = state.overrides.has(p.id) ? state.overrides.get(p.id) : auto;
+      });
+    });
+    state.groups = groups;
+  }
+
+  // ---------- แสดงผล ----------
+  function counts() {
+    const P = state.photos;
+    const kept = P.filter(p => p.keep).length;
+    const dupGroups = state.groups.filter(g => g.length > 1);
+    return {
+      all: P.length, kept, drop: P.length - kept,
+      dupGroups: dupGroups.length, dupPhotos: dupGroups.reduce((a, g) => a + g.length, 0),
+      blurry: P.filter(p => p.blurry).length
+    };
+  }
+
+  function renderStats() {
+    const c = counts();
+    $('stats').innerHTML = [
+      ['ทั้งหมด', c.all, ''],
+      ['กลุ่มภาพซ้ำ', c.dupGroups, `${num(c.dupPhotos)} รูป`],
+      ['เก็บไว้', c.kept, 'keep'],
+      ['คัดออก', c.drop, 'drop'],
+      ['ภาพเบลอ', c.blurry, '']
+    ].map(([label, n, extra]) => `<div class="stat ${extra === 'keep' || extra === 'drop' ? extra : ''}">
+        <span>${label}</span><strong>${num(n)}</strong>${extra && extra !== 'keep' && extra !== 'drop' ? `<small>${extra}</small>` : ''}</div>`).join('');
+
+    const tabs = [['all', 'ทั้งหมด', c.all], ['dup', 'เฉพาะกลุ่มภาพซ้ำ', c.dupPhotos], ['keep', 'เก็บไว้', c.kept], ['drop', 'คัดออก', c.drop]];
+    $('tabs').innerHTML = tabs.map(([f, label, n]) =>
+      `<button type="button" role="tab" class="chip${state.filter === f ? ' on' : ''}" data-f="${f}" aria-selected="${state.filter === f}">${label} (${num(n)})</button>`).join('');
+
+    $('exportCount').textContent = `เก็บไว้ ${num(c.kept)} จาก ${num(c.all)} รูป`;
+    $('exportBtn').disabled = !c.kept || state.exporting;
+  }
+
+  function renderSkipNote() {
+    const s = state.skipped || {};
+    const parts = [];
+    if (s.raw) parts.push(`ไฟล์ RAW ${num(s.raw)} ไฟล์ (คัดลอกตามคู่ JPG ได้ตอนบันทึก)`);
+    if (s.video) parts.push(`วิดีโอ ${num(s.video)} ไฟล์`);
+    if (s.heic) parts.push(`HEIC ที่แปลงไม่ได้ ${num(s.heic)} ไฟล์`);
+    if (s.other) parts.push(`ไฟล์อื่น ${num(s.other)} ไฟล์`);
+    if (state.failed) parts.push(`รูปที่เปิดไม่ได้ ${num(state.failed)} ไฟล์`);
+    const notAnalyzed = state.total - state.photos.length - state.failed;
+    if (notAnalyzed > 0) parts.push(`ยังไม่ได้วิเคราะห์ ${num(notAnalyzed)} รูป (กดหยุดไว้)`);
+    $('skipNote').textContent = parts.length ? 'ไม่ได้นำมาคัด: ' + parts.join(', ') : '';
+    $('rawWrap').hidden = !s.raw;
+  }
+
+  function card(p) {
+    const badges = [];
+    if (p.best) badges.push('<b class="bd best">ดีที่สุดในกลุ่ม</b>');
+    if (p.blurry) badges.push('<b class="bd warn">เบลอ</b>');
+    if (p.dark) badges.push('<b class="bd warn">มืด</b>');
+    if (p.bright) badges.push('<b class="bd warn">สว่างเกิน</b>');
+    const tip = `${p.name} · คะแนน ${p.score}` + (!p.keep && p.reason ? ` · ${p.reason}` : '');
+    return `<div class="cp ${p.keep ? 'keep' : 'drop'}" data-id="${p.id}" title="${esc(tip)}">
+      <img src="${p.thumbUrl}" alt="${esc(p.name)}" loading="lazy" draggable="false">
+      <span class="cp-score" title="คะแนนความคมชัดและแสง">${p.score}</span>
+      <button type="button" class="cp-zoom" aria-label="ดูภาพใหญ่"><svg viewBox="0 0 24 24" width="16" height="16"><circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4.5-4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+      <span class="cp-status">${p.keep ? '✓ เก็บ' : '✕ คัดออก'}</span>
+      <span class="cp-badges">${badges.join('')}</span>
+    </div>`;
+  }
+
+  function renderList() {
+    const f = state.filter;
+    const view = [];
+    const grid = arr => { arr.forEach(p => view.push(p.id)); return `<div class="cp-grid">${arr.map(card).join('')}</div>`; };
+    let html = '';
+
+    if (f === 'keep' || f === 'drop') {
+      const arr = [...state.photos].sort(byTime).filter(p => (f === 'keep' ? p.keep : !p.keep));
+      if (arr.length) html = grid(arr);
+    } else {
+      let singles = [];
+      let dupNo = 0;
+      const flush = () => {
+        if (!singles.length) return;
+        html += `<section class="grp single"><header><strong>ภาพเดี่ยว</strong><span class="muted">${num(singles.length)} รูป · ไม่มีภาพที่คล้ายกัน</span></header>${grid(singles)}</section>`;
+        singles = [];
+      };
+      state.groups.forEach((g, gi) => {
+        if (g.length === 1) { if (f === 'all') singles.push(g[0]); return; }
+        flush();
+        dupNo++;
+        const k = g.filter(p => p.keep).length;
+        html += `<section class="grp" data-g="${gi}"><header><strong>กลุ่มภาพซ้ำ ${dupNo}</strong>
+          <span class="muted">${g.length} รูป · ${fmtTime(g[0].time)} · เก็บไว้ <b class="gk">${k}</b> รูป</span></header>${grid(g)}</section>`;
+      });
+      flush();
+    }
+    state.view = view;
+    $('list').innerHTML = html || '<div class="empty"><h2>ไม่มีรูปในหมวดนี้</h2></div>';
+  }
+
+  function renderAll() {
+    $('setKeep').value = String(state.settings.keep);
+    $('setSens').value = String(state.settings.sens);
+    $('sensLabel').textContent = SENS[state.settings.sens].label;
+    $('setBlur').checked = !!state.settings.dropBlur;
+    renderSkipNote();
+    renderStats();
+    renderList();
+    renderWmControls();
+    drawWmPreview();
+  }
+
+  // ---------- ปรับภาพและลายน้ำ ----------
+  const wmPv = { id: null, bmp: null, busy: null, holding: false };
+  function exportLabel() {
+    const w = state.settings.wm.on, e = state.settings.enh.on;
+    if (w && e) return 'ปรับภาพ ใส่ลายน้ำ และบันทึก';
+    if (w) return 'ใส่ลายน้ำและบันทึกลงโฟลเดอร์';
+    if (e) return 'ปรับภาพและบันทึกลงโฟลเดอร์';
+    return 'บันทึกรูปที่เก็บไว้ลงโฟลเดอร์';
+  }
+  function renderWmControls() {
+    const w = state.settings.wm, en = state.settings.enh;
+    $('wmOn').checked = w.on;
+    $('wmFields').classList.toggle('off', !w.on);
+    $('enhOn').checked = en.on;
+    $('enhFields').classList.toggle('off', !en.on);
+    $('holdCompare').hidden = !en.on && !w.on;
+    const nKept = state.photos.filter(p => p.keep).length;
+    $('wmPrev').hidden = $('wmNext').hidden = nKept < 2;
+    [['wmStyle', w.style], ['wmPos', w.pos], ['wmSize', w.size], ['enhLevel', en.level]].forEach(([id, v]) => {
+      $(id).querySelectorAll('button').forEach(b => {
+        b.classList.toggle('on', b.dataset.v === v);
+        b.setAttribute('aria-checked', b.dataset.v === v);
+      });
+    });
+    $('wmPosWrap').hidden = w.style === 'center';
+    $('wmOpacity').value = String(w.opacity);
+    $('wmOpLabel').textContent = w.opacity + '%';
+    if (!state.exporting) $('exportBtn').textContent = exportLabel(); // ระหว่างบันทึก ปุ่มแสดงความคืบหน้าอยู่
+  }
+
+  // รูปตัวอย่าง: รูปที่เก็บไว้ (ถ้าไม่มี ใช้ภาพทิวทัศน์สมมติ)
+  async function drawWmPreview() {
+    const canvas = $('wmCanvas');
+    const kept = state.photos.filter(p => p.keep).sort(byTime);
+    let p = state.byId.get(wmPv.id);
+    if (!p || !p.keep) p = kept[0];
+    // กดค้างปุ่มเทียบ = แสดงภาพต้นฉบับ ไม่ปรับ ไม่มีลายน้ำ
+    const opts = wmPv.holding ? null : wmOpts();
+    const enh = wmPv.holding ? null : enhLevel();
+    $('pvTag').hidden = !wmPv.holding;
+    const showInfo = info => {
+      $('enhInfo').textContent = wmPv.holding ? '' : !enh ? '' : info && info.length
+        ? 'ปรับภาพนี้: ' + info.join(' · ') : 'ภาพนี้สมดุลดีอยู่แล้ว ปรับเพียงเล็กน้อย';
+    };
+    if (!p) {
+      wmPv.id = null;
+      $('wmPreviewName').textContent = 'ยังไม่มีรูปที่เก็บไว้ แสดงภาพตัวอย่าง';
+      return WM.renderPreview(canvas, sampleScene, opts, null).then(() => showInfo(null));
+    }
+    if (wmPv.id !== p.id || !wmPv.bmp) {
+      wmPv.id = p.id;
+      const id = p.id;
+      const job = WM.decode(p.file).then(bmp => {
+        // ย่อไว้เพื่อให้ปรับค่าแล้ววาดใหม่ได้เร็ว
+        const sc = Math.min(1, 1200 / Math.max(bmp.width, bmp.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc);
+        c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+        bmp.close();
+        return c;
+      });
+      wmPv.busy = job;
+      let src;
+      try { src = await job; } catch (e) { return; }
+      if (wmPv.id !== id) return; // ผู้ใช้เปลี่ยนภาพไปแล้ว
+      wmPv.bmp = src;
+    }
+    $('wmPreviewName').textContent = `${p.name} · ${kept.indexOf(p) + 1}/${kept.length} รูปที่เก็บไว้`;
+    showInfo(await WM.renderPreview(canvas, wmPv.bmp, opts, enh));
+  }
+  const onWm = () => { saveSettings(); renderWmControls(); drawWmPreview(); drawSample(); };
+  $('wmOn').onchange = () => { state.settings.wm.on = $('wmOn').checked; onWm(); };
+  $('enhOn').onchange = () => { state.settings.enh.on = $('enhOn').checked; onWm(); };
+  [['wmStyle', 'wm', 'style'], ['wmPos', 'wm', 'pos'], ['wmSize', 'wm', 'size'], ['enhLevel', 'enh', 'level']].forEach(([id, group, key]) => {
+    $(id).addEventListener('click', e => {
+      const b = e.target.closest('button[data-v]');
+      if (!b) return;
+      state.settings[group][key] = b.dataset.v;
+      onWm();
+    });
+  });
+  // กดค้างเพื่อเทียบกับภาพก่อนปรับ
+  const hold = on => { if (wmPv.holding === on) return; wmPv.holding = on; drawWmPreview(); };
+  const hc = $('holdCompare');
+  hc.addEventListener('pointerdown', e => { e.preventDefault(); hc.setPointerCapture(e.pointerId); hold(true); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => hc.addEventListener(ev, () => hold(false)));
+  hc.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); hold(true); } });
+  hc.addEventListener('keyup', () => hold(false));
+  hc.addEventListener('blur', () => hold(false));
+  $('wmOpacity').oninput = () => { state.settings.wm.opacity = +$('wmOpacity').value; onWm(); };
+  // ลูกศรซ้าย/ขวาบนภาพตัวอย่าง: เลื่อนดูรูปที่เก็บไว้
+  const wmStep = d => {
+    const kept = state.photos.filter(p => p.keep).sort(byTime);
+    if (kept.length < 2) return toast('มีรูปที่เก็บไว้เพียงรูปเดียว');
+    const i = Math.max(0, kept.findIndex(p => p.id === wmPv.id));
+    wmPv.id = kept[(i + d + kept.length) % kept.length].id;
+    wmPv.bmp = null;
+    drawWmPreview();
+  };
+  $('wmPrev').onclick = () => wmStep(-1);
+  $('wmNext').onclick = () => wmStep(1);
+
+  // ---------- โต้ตอบ ----------
+  function setKeep(p, keep) {
+    p.keep = keep;
+    if (keep === p.auto) state.overrides.delete(p.id); else state.overrides.set(p.id, keep);
+    document.querySelectorAll(`.cp[data-id="${p.id}"]`).forEach(el => {
+      el.className = 'cp ' + (keep ? 'keep' : 'drop');
+      el.querySelector('.cp-status').textContent = keep ? '✓ เก็บ' : '✕ คัดออก';
+    });
+    const gk = document.querySelector(`.grp[data-g="${p.group}"] .gk`);
+    if (gk) gk.textContent = state.groups[p.group].filter(x => x.keep).length;
+    renderStats();
+    renderWmControls();
+    drawWmPreview();
+  }
+
+  $('list').addEventListener('click', e => {
+    const el = e.target.closest('.cp');
+    if (!el) return;
+    const p = state.byId.get(+el.dataset.id);
+    if (e.target.closest('.cp-zoom')) openPreview(p.id);
+    else setKeep(p, !p.keep);
+  });
+  $('tabs').addEventListener('click', e => {
+    const b = e.target.closest('[data-f]');
+    if (!b) return;
+    state.filter = b.dataset.f;
+    renderStats();
+    renderList();
+  });
+
+  const onSetting = () => {
+    state.settings.keep = +$('setKeep').value;
+    state.settings.sens = +$('setSens').value;
+    state.settings.dropBlur = $('setBlur').checked;
+    saveSettings();
+    recompute();
+    renderAll();
+  };
+  $('setKeep').onchange = onSetting;
+  $('setSens').oninput = onSetting;
+  $('setBlur').onchange = onSetting;
+  $('resetManual').onclick = () => { state.overrides.clear(); recompute(); renderAll(); toast('กลับไปใช้ผลที่ระบบเลือกแล้ว'); };
+  $('restart').onclick = () => {
+    if (state.overrides.size && !confirm('ยกเลิกผลการคัดนี้และเริ่มใหม่?')) return;
+    resetResults();
+    show('stepStart');
+  };
+
+  // ---------- ดูภาพใหญ่ ----------
+  const pv = { el: $('preview'), img: $('pvImg'), idx: 0, url: null };
+  function openPreview(id) {
+    pv.idx = Math.max(0, state.view.indexOf(id));
+    pv.el.hidden = false;
+    document.body.classList.add('no-scroll');
+    showPreview();
+  }
+  function showPreview() {
+    const p = state.byId.get(state.view[pv.idx]);
+    if (!p) return closePreview();
+    if (pv.url) URL.revokeObjectURL(pv.url);
+    pv.url = URL.createObjectURL(p.file);
+    pv.img.src = p.thumbUrl;
+    const full = new Image();
+    const url = pv.url;
+    full.onload = () => { if (pv.url === url) pv.img.src = url; };
+    full.src = url;
+    const notes = [];
+    if (p.best) notes.push('ดีที่สุดในกลุ่ม');
+    if (!p.keep && p.reason) notes.push(p.reason);
+    $('pvInfo').textContent = `${pv.idx + 1}/${state.view.length} · ${p.name} · ${fmtTime(p.time)} · คะแนน ${p.score}` + (notes.length ? ' · ' + notes.join(', ') : '');
+    const t = $('pvToggle');
+    t.textContent = p.keep ? '✓ เก็บไว้ (กดเพื่อคัดออก)' : '✕ คัดออก (กดเพื่อเก็บ)';
+    t.className = 'btn btn-sm ' + (p.keep ? 'btn-keep' : 'btn-light');
+  }
+  function closePreview() {
+    pv.el.hidden = true;
+    pv.img.removeAttribute('src');
+    if (pv.url) { URL.revokeObjectURL(pv.url); pv.url = null; }
+    document.body.classList.remove('no-scroll');
+  }
+  const pvStep = d => { pv.idx = (pv.idx + d + state.view.length) % state.view.length; showPreview(); };
+  const pvToggle = () => { const p = state.byId.get(state.view[pv.idx]); setKeep(p, !p.keep); showPreview(); };
+  $('pvPrev').onclick = () => pvStep(-1);
+  $('pvNext').onclick = () => pvStep(1);
+  $('pvClose').onclick = closePreview;
+  $('pvToggle').onclick = pvToggle;
+  pv.el.addEventListener('click', e => { if (e.target.classList.contains('lb-stage')) closePreview(); });
+  document.addEventListener('keydown', e => {
+    if (pv.el.hidden) return;
+    if (e.key === 'Escape') closePreview();
+    else if (e.key === 'ArrowLeft') pvStep(-1);
+    else if (e.key === 'ArrowRight') pvStep(1);
+    else if (e.key === ' ' || e.key.toLowerCase() === 'k') { e.preventDefault(); pvToggle(); }
+  });
+
+  // ---------- บันทึกรูปที่เก็บไว้ ----------
+  function exportItems() {
+    const withRaw = $('withRaw').checked && !$('rawWrap').hidden;
+    const items = [];
+    for (const p of state.photos.filter(x => x.keep).sort(byTime)) {
+      const raw = withRaw ? state.raws.get(stemKey(p.path)) : null;
+      items.push({ file: p.file, raw });
+    }
+    return items;
+  }
+  const splitName = n => { const d = n.lastIndexOf('.'); return d > 0 ? [n.slice(0, d), n.slice(d)] : [n, '']; };
+
+  async function exists(dir, name) {
+    try { await dir.getFileHandle(name); return true; } catch (e) { return false; }
+  }
+  // ตั้งชื่อไม่ให้ซ้ำ และไม่เขียนทับไฟล์ที่มีอยู่แล้วในโฟลเดอร์ปลายทาง
+  async function uniqueStem(dir, stem, exts, used) {
+    let n = 1, cand = stem;
+    const taken = async c => {
+      for (const ext of exts) {
+        const name = (c + ext).toLowerCase();
+        if (used.has(name)) return true;
+        if (dir && await exists(dir, c + ext)) return true;
+      }
+      return false;
+    };
+    while (await taken(cand)) { n++; cand = `${stem} (${n})`; }
+    exts.forEach(ext => used.add((cand + ext).toLowerCase()));
+    return cand;
+  }
+
+  async function writeAll(items, writeFile, onProgress) {
+    const used = new Set();
+    let done = 0;
+    // ใช้ค่าตั้งค่า ณ ตอนกดบันทึก ทุกรูปในชุดจึงได้ลายน้ำแบบเดียวกันแม้มีการปรับค่าระหว่างบันทึก
+    const wm = wmOpts() ? Object.assign({}, wmOpts()) : null, enh = enhLevel();
+    const asIs = []; // รูปที่ปรับ/ใส่ลายน้ำไม่ได้ จึงคัดลอกต้นฉบับไปแทน
+    const totalFiles = items.reduce((a, it) => a + (it.raw ? 2 : 1), 0);
+    for (const it of items) {
+      let [stem, ext] = splitName(it.file.name);
+      let data = it.file;
+      if (wm || enh) {
+        try {
+          const r = await WM.renderFile(it.file, wm, enh);
+          data = r.blob;
+          ext = r.ext;
+        } catch (e) {
+          console.warn('ปรับภาพ/ใส่ลายน้ำไม่ได้ คัดลอกต้นฉบับแทน', it.file.name, e);
+          asIs.push(it.file.name);
+        }
+      }
+      const rawExt = it.raw ? splitName(it.raw.name)[1] : null;
+      const finalStem = await uniqueStem(writeFile.dir, stem, rawExt ? [ext, rawExt] : [ext], used);
+      await writeFile(finalStem + ext, data);
+      onProgress(++done, totalFiles);
+      if (it.raw) { await writeFile(finalStem + rawExt, it.raw); onProgress(++done, totalFiles); }
+    }
+    return { total: totalFiles, asIs };
+  }
+  const asIsNote = r => (r.asIs.length ? ` · ${num(r.asIs.length)} รูปปรับภาพไม่ได้ จึงบันทึกต้นฉบับแทน: ${r.asIs.slice(0, 3).join(', ')}${r.asIs.length > 3 ? ' ...' : ''}` : '');
+
+  $('exportBtn').onclick = async () => {
+    const items = exportItems();
+    if (!items.length) return;
+    const btn = $('exportBtn');
+    const verb = state.settings.enh.on ? 'กำลังปรับภาพและบันทึก' : state.settings.wm.on ? 'กำลังใส่ลายน้ำและบันทึก' : 'กำลังบันทึก';
+    const progress = (d, t) => { btn.textContent = `${verb} ${num(d)}/${num(t)}`; };
+    btn.textContent = verb + '...';
+    btn.disabled = true;
+    state.exporting = true;
+    $('restart').disabled = true;
+    try {
+      if (window.showDirectoryPicker) {
+        let dir;
+        try { dir = await window.showDirectoryPicker({ id: 'cull-output', mode: 'readwrite', startIn: 'pictures' }); }
+        catch (e) { if (e.name === 'AbortError') return; throw e; }
+        const write = async (name, file) => {
+          const fh = await dir.getFileHandle(name, { create: true });
+          const w = await fh.createWritable();
+          await w.write(file);
+          await w.close();
+        };
+        write.dir = dir;
+        const r = await writeAll(items, write, progress);
+        const extra = [state.settings.enh.on && 'ปรับแสงและสีแล้ว', state.settings.wm.on && 'มีลายน้ำ PCSK PHOTO'].filter(Boolean).join(' ');
+        toast(`บันทึกแล้ว ${num(r.total)} ไฟล์${extra ? ` (${extra})` : ''} ลงโฟลเดอร์ "${dir.name}"${asIsNote(r)}`, r.asIs.length ? 'error' : '');
+      } else {
+        // เบราว์เซอร์ที่ไม่รองรับการเลือกโฟลเดอร์: รวมเป็นไฟล์ .zip
+        const size = items.reduce((a, it) => a + it.file.size + (it.raw ? it.raw.size : 0), 0);
+        if (size > 1.5e9) {
+          toast(`รูปที่เลือกมีขนาด ${fmtSize(size)} ใหญ่เกินกว่าจะรวมเป็น .zip ได้ กรุณาใช้ Chrome หรือ Edge`, 'error');
+          return;
+        }
+        if (!window.JSZip) throw new Error('โหลดเครื่องมือบีบอัดไฟล์ไม่สำเร็จ');
+        const zip = new JSZip();
+        const write = async (name, file) => { zip.file(name, file); };
+        const r = await writeAll(items, write, progress);
+        if (r.asIs.length) toast(asIsNote(r).slice(3), 'error');
+        btn.textContent = 'กำลังสร้างไฟล์ .zip...';
+        const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = state.settings.wm.on ? 'PCSK-PHOTO.zip' : 'รูปที่คัดแล้ว.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      }
+    } catch (e) {
+      console.error(e);
+      toast('บันทึกไม่สำเร็จ: ' + ((e && e.message) || e), 'error');
+    } finally {
+      state.exporting = false;
+      $('restart').disabled = false;
+      btn.disabled = false;
+      btn.textContent = exportLabel();
+    }
+  };
+
+  // ป้องกันการปิดหน้าโดยไม่ตั้งใจหลังคัดรูปแล้ว
+  window.addEventListener('beforeunload', e => {
+    if (state.photos.length) { e.preventDefault(); e.returnValue = ''; }
+  });
+
+  // สำหรับการทดสอบ
+  window.__cull = { state, startWith };
+})();

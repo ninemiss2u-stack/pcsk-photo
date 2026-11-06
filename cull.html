@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PCSK PHOTO · คัดรูปและใส่ลายน้ำ</title>
+  <meta name="theme-color" content="#2f6a12">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@500;600;700&family=Sarabun:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/cull.css">
+  <link rel="icon" href="img/logo.webp" type="image/webp">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a href="index.html" class="brand" title="กลับหน้าแรก">
+        <span class="brand-seal"><img class="logo-img raw" src="img/logo.webp" alt="ตราโรงเรียน"></span>
+        <span class="brand-text"><strong id="schoolName"></strong><small>PCSK PHOTO · คัดรูปและใส่ลายน้ำ</small></span>
+      </a>
+    </div>
+  </header>
+
+  <div class="stepper-wrap">
+    <ol class="stepper wrap" id="stepper">
+      <li data-s="stepStart"><b>1</b><span>เลือกรูป</span></li>
+      <li data-s="stepProgress"><b>2</b><span>วิเคราะห์</span></li>
+      <li data-s="stepResults"><b>3</b><span>คัดรูป ปรับภาพ ใส่ลายน้ำ</span></li>
+    </ol>
+  </div>
+
+  <main class="wrap">
+    <!-- ขั้นที่ 1: เลือกรูป -->
+    <section id="stepStart">
+      <div class="hero-card">
+        <img class="hero-bg logo-img raw" src="img/logo.webp" alt="" aria-hidden="true">
+        <div class="hero-seal"><img class="logo-img raw" src="img/logo.webp" alt="ตราโรงเรียนประชาสงเคราะห์วิทยา"></div>
+        <div class="hero-text">
+          <span class="eyebrow" id="eyebrow">PCSK PHOTO</span>
+          <img class="brand-mark" id="brandMark" alt="PCSK PHOTO โรงเรียนประชาสงเคราะห์วิทยา" hidden>
+          <h1>คัดรูปกิจกรรมอัตโนมัติ<br>พร้อมใส่ลายน้ำโรงเรียน</h1>
+          <p>นำรูปทั้งหมดจากเมมโมรี่การ์ดเข้ามา ระบบจะจัดกลุ่มภาพที่ถ่ายซ้ำ เลือกภาพที่คมชัดที่สุดไว้ให้ ปรับแสงและสีให้สมดุล แล้วใส่ลายน้ำ <b>PCSK PHOTO</b> ตอนบันทึกลงเครื่อง</p>
+        </div>
+      </div>
+
+      <div class="start-grid">
+        <div class="panel">
+          <div class="dropzone big" id="drop">
+            <svg class="drop-ic" viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path d="M4 7h3l1.5-2h7L17 7h3a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+            <strong>ลากโฟลเดอร์หรือรูปมาวางที่นี่</strong>
+            <span class="muted">หรือ</span>
+            <div class="pick-buttons">
+              <button class="btn" id="pickFolder" type="button">เลือกโฟลเดอร์ (เช่น DCIM ในเมมโมรี่การ์ด)</button>
+              <button class="btn btn-ghost" id="pickFiles" type="button">เลือกไฟล์รูป</button>
+            </div>
+            <input type="file" id="folderInput" webkitdirectory multiple hidden>
+            <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" multiple hidden>
+          </div>
+          <ul class="howto">
+            <li><strong>ทำงานในเครื่องนี้ทั้งหมด</strong> ไม่มีการส่งรูปขึ้นอินเทอร์เน็ต (ถ้าเบราว์เซอร์ถามว่าจะ "อัปโหลด" ไฟล์ ให้กดยืนยันได้ รูปไม่ได้ออกไปไหน)</li>
+            <li><strong>ไม่ลบหรือแก้ไขไฟล์ในเมมโมรี่การ์ด</strong> ลายน้ำจะใส่ในไฟล์ที่บันทึกใหม่เท่านั้น</li>
+            <li>รองรับไฟล์ JPG, PNG, WebP และ HEIC จาก iPhone (แปลงเป็น JPG ให้อัตโนมัติ ครั้งแรกต้องต่ออินเทอร์เน็ต) ถ้ากล้องถ่าย RAW คู่กับ JPG สามารถคัดลอกไฟล์ RAW ตามไปด้วยได้</li>
+            <li>แนะนำให้ใช้ Google Chrome หรือ Microsoft Edge บนคอมพิวเตอร์</li>
+          </ul>
+        </div>
+        <figure class="panel sample">
+          <canvas id="sampleCanvas" width="960" height="640" aria-label="ตัวอย่างลายน้ำ PCSK PHOTO"></canvas>
+          <figcaption><strong>ตัวอย่างลายน้ำ</strong><span class="muted">ปรับรูปแบบ ตำแหน่ง และขนาดได้หลังคัดรูปเสร็จ</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ขั้นที่ 2: กำลังวิเคราะห์ -->
+    <section id="stepProgress" hidden>
+      <div class="panel narrow-wide">
+        <img class="progress-seal logo-img raw" src="img/logo.webp" alt="">
+        <h2 id="pTitle">กำลังวิเคราะห์รูป...</h2>
+        <div class="progress"><div class="bar"><i id="pBar"></i></div></div>
+        <p id="pText" class="ptext"></p>
+        <p id="pEta" class="muted"></p>
+        <button class="btn btn-ghost" id="cancel" type="button">หยุด และดูผลเท่าที่วิเคราะห์แล้ว</button>
+      </div>
+    </section>
+
+    <!-- ขั้นที่ 3: ผลการคัด -->
+    <section id="stepResults" hidden>
+      <div class="stats" id="stats"></div>
+      <p class="muted small" id="skipNote"></p>
+
+      <div class="panel settings">
+        <label class="set">
+          <span>เก็บไว้กลุ่มละ</span>
+          <select id="setKeep">
+            <option value="1">1 ภาพ (ภาพที่ดีที่สุด)</option>
+            <option value="2">2 ภาพ</option>
+            <option value="3">3 ภาพ</option>
+          </select>
+        </label>
+        <label class="set">
+          <span>ความไวในการจับภาพซ้ำ: <b id="sensLabel"></b></span>
+          <input type="range" id="setSens" min="1" max="3" step="1">
+        </label>
+        <label class="set check">
+          <input type="checkbox" id="setBlur">
+          <span>คัดภาพเบลอออกอัตโนมัติ</span>
+        </label>
+        <button class="btn btn-ghost btn-sm" id="resetManual" type="button">ล้างการเลือกด้วยมือ</button>
+      </div>
+
+      <section class="panel wm-panel" aria-labelledby="wmTitle">
+        <div class="wm-controls">
+          <h2 id="wmTitle" class="wm-title">ปรับภาพและลายน้ำ</h2>
+
+          <div class="wm-block">
+            <div class="wm-head">
+              <h3>ปรับแสงและสีอัตโนมัติ</h3>
+              <label class="switch"><input type="checkbox" id="enhOn"><i></i><span>เปิด</span></label>
+            </div>
+            <div class="wm-fields" id="enhFields">
+              <div class="set">
+                <span>ระดับการปรับ</span>
+                <div class="seg" id="enhLevel" role="radiogroup">
+                  <button type="button" data-v="low">อ่อน</button>
+                  <button type="button" data-v="mid">ปานกลาง</button>
+                  <button type="button" data-v="high">เต็มที่</button>
+                </div>
+              </div>
+              <p class="muted small enh-note">แก้สีเพี้ยน ปรับความสว่างและช่วงแสง เพิ่มคอนทราสต์และสีสันเล็กน้อย ให้ทุกภาพในชุดโทนใกล้เคียงกัน</p>
+            </div>
+          </div>
+
+          <div class="wm-block">
+          <div class="wm-head">
+            <h3>ลายน้ำ PCSK PHOTO</h3>
+            <label class="switch"><input type="checkbox" id="wmOn"><i></i><span>เปิด</span></label>
+          </div>
+          <div class="wm-fields" id="wmFields">
+            <div class="set">
+              <span>รูปแบบ</span>
+              <div class="seg" id="wmStyle" role="radiogroup">
+                <button type="button" data-v="corner">มุมภาพ</button>
+                <button type="button" data-v="line">เส้นกรอบบาง</button>
+                <button type="button" data-v="center">กลางภาพ</button>
+              </div>
+            </div>
+            <div class="set" id="wmPosWrap">
+              <span>ตำแหน่งป้าย</span>
+              <div class="seg" id="wmPos" role="radiogroup">
+                <button type="button" data-v="bl">ซ้ายล่าง</button>
+                <button type="button" data-v="bc">กลางล่าง</button>
+                <button type="button" data-v="br">ขวาล่าง</button>
+              </div>
+            </div>
+            <div class="set">
+              <span>ขนาด</span>
+              <div class="seg" id="wmSize" role="radiogroup">
+                <button type="button" data-v="s">เล็ก</button>
+                <button type="button" data-v="m">กลาง</button>
+                <button type="button" data-v="l">ใหญ่</button>
+              </div>
+            </div>
+            <label class="set">
+              <span>ความเข้ม: <b id="wmOpLabel"></b></span>
+              <input type="range" id="wmOpacity" min="40" max="100" step="5">
+            </label>
+          </div>
+          </div>
+          <p class="muted small">ทั้งสองอย่างทำกับรูปที่บันทึกใหม่ (ความละเอียดเต็ม) ไฟล์ในเมมโมรี่การ์ดไม่ถูกแก้ไข ไฟล์ RAW คัดลอกไปตามเดิม</p>
+        </div>
+        <figure class="wm-preview">
+          <div class="pv-wrap">
+            <canvas id="wmCanvas" width="960" height="640" aria-label="ตัวอย่างการปรับภาพและลายน้ำบนรูปที่เก็บไว้"></canvas>
+            <span class="pv-tag" id="pvTag" hidden>ภาพก่อนปรับ</span>
+            <button class="pv-arrow prev" id="wmPrev" type="button" aria-label="ภาพก่อนหน้า">&#8249;</button>
+            <button class="pv-arrow next" id="wmNext" type="button" aria-label="ภาพถัดไป">&#8250;</button>
+          </div>
+          <p class="enh-info small" id="enhInfo"></p>
+          <figcaption>
+            <span class="muted small" id="wmPreviewName"></span>
+            <span class="pv-btns">
+              <button class="btn btn-ghost btn-sm" id="holdCompare" type="button">กดค้างเพื่อดูภาพก่อนปรับ</button>
+            </span>
+          </figcaption>
+        </figure>
+      </section>
+
+      <div class="tabs" id="tabs" role="tablist"></div>
+      <p class="muted small tip">คลิกที่รูปเพื่อสลับ เก็บ / คัดออก · กดปุ่มแว่นขยายเพื่อดูภาพใหญ่</p>
+      <div id="list"></div>
+
+      <div class="export-bar">
+        <span id="exportCount" class="export-count"></span>
+        <label class="set check" id="rawWrap" hidden>
+          <input type="checkbox" id="withRaw" checked>
+          <span>คัดลอกไฟล์ RAW คู่กันด้วย</span>
+        </label>
+        <span class="spacer"></span>
+        <button class="btn btn-ghost" id="restart" type="button">เริ่มใหม่</button>
+        <button class="btn" id="exportBtn" type="button">บันทึกรูปที่เก็บไว้ลงโฟลเดอร์</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <img class="logo-img raw" src="img/logo.webp" alt="">
+      <div>
+        <strong id="footSchool"></strong>
+        <span>งานประชาสัมพันธ์ · PCSK PHOTO</span>
+      </div>
+      <p class="credit">ผู้จัดทำ <strong>สมเกียรติ รักกูล</strong></p>
+    </div>
+  </footer>
+
+  <div id="preview" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="ดูภาพใหญ่">
+    <div class="lb-top">
+      <span id="pvInfo" class="pv-info"></span>
+      <div class="lb-actions">
+        <button id="pvToggle" class="btn btn-sm" type="button"></button>
+        <button id="pvClose" class="lb-close" type="button" aria-label="ปิด">&times;</button>
+      </div>
+    </div>
+    <button id="pvPrev" class="lb-nav lb-prev" type="button" aria-label="ภาพก่อนหน้า">&#8249;</button>
+    <div class="lb-stage"><img id="pvImg" alt=""></div>
+    <button id="pvNext" class="lb-nav lb-next" type="button" aria-label="ภาพถัดไป">&#8250;</button>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/cull-core.js"></script>
+  <script src="js/enhance.js"></script>
+  <script src="js/watermark.js"></script>
+  <script src="js/heic.js"></script>
+  <script src="js/cull.js"></script>
+</body>
+</html>

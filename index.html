@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PCSK PHOTO · โรงเรียนประชาสงเคราะห์วิทยา</title>
+  <meta name="theme-color" content="#08130a">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600&family=Sarabun:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/welcome.css">
+  <link rel="icon" href="img/logo.webp" type="image/webp">
+</head>
+<body>
+  <div class="bg" aria-hidden="true"></div>
+  <div class="veil" aria-hidden="true"></div>
+  <div class="dust" aria-hidden="true">
+    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+  </div>
+  <div class="frame" aria-hidden="true"><b></b><b></b><b></b><b></b></div>
+
+  <main class="stage">
+    <header class="school">
+      <div class="seal"><img class="logo-img raw" src="img/logo.webp" alt="ตราโรงเรียนประชาสงเคราะห์วิทยา"></div>
+      <p class="school-name">โรงเรียนประชาสงเคราะห์วิทยา</p>
+      <p class="school-sub">จังหวัดพิษณุโลก · งานประชาสัมพันธ์</p>
+    </header>
+
+    <section class="hero">
+      <h1 class="mark-wrap">
+        <img id="brandMark" class="mark" alt="PCSK PHOTO" hidden>
+        <span id="markText" class="mark-text">PCSK <em>PHOTO</em></span>
+      </h1>
+      <div class="ornament" aria-hidden="true"><span></span><i></i><span></span></div>
+      <p class="tagline">ระบบคัดรูป ปรับแต่งภาพ และใส่ลายน้ำกิจกรรมโรงเรียน</p>
+      <p class="lead">จากเมมโมรี่การ์ดสู่ภาพพร้อมเผยแพร่ ในไม่กี่ขั้นตอน</p>
+
+      <ul class="features">
+        <li>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="8" height="6" rx="1"/><rect x="13" y="5" width="8" height="6" rx="1"/><rect x="3" y="13" width="8" height="6" rx="1"/><path d="M15 16l2 2 4-4"/></svg>
+          <strong>คัดรูปอัตโนมัติ</strong>
+          <span>จัดกลุ่มภาพซ้ำ เลือกภาพคมชัดที่สุด</span>
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>
+          <strong>ปรับแสงและสี</strong>
+          <span>สมดุลแสง แก้สีเพี้ยน ทุกภาพโทนเดียวกัน</span>
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.2"/></svg>
+          <strong>ลายน้ำ PCSK PHOTO</strong>
+          <span>ใส่ลายน้ำโรงเรียนให้ทุกภาพอัตโนมัติ</span>
+        </li>
+      </ul>
+
+      <a class="cta" id="enter" href="cull.html">
+        <span>เข้าสู่การใช้งาน</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+      <p class="privacy">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>
+        ทำงานในเครื่องนี้ทั้งหมด ไม่มีการส่งรูปขึ้นอินเทอร์เน็ต
+      </p>
+    </section>
+
+    <footer class="credit">
+      <span class="credit-label">ผู้จัดทำ</span>
+      <strong>สมเกียรติ รักกูล</strong>
+    </footer>
+  </main>
+
+  <script src="js/config.js"></script>
+  <script src="js/watermark.js"></script>
+  <script>
+    (function () {
+      const WM = window.PCSKWatermark;
+      // โลโก้กล้อง PCSK PHOTO พื้นโปร่งใส (ถ้าเปิดไฟล์ตรง ๆ แล้วทำไม่ได้ จะแสดงตัวอักษรแทน)
+      WM.loadMark('img/pcsk-photo.webp').then(c => {
+        const img = document.getElementById('brandMark');
+        img.src = c.toDataURL('image/png');
+        img.onload = () => { img.hidden = false; document.getElementById('markText').hidden = true; };
+      }).catch(() => {});
+      // ตราโรงเรียนตัดขอบเป็นวงกลม
+      WM.loadLogo('img/logo.webp').then(c => {
+        const img = document.querySelector('.seal img');
+        img.src = c.toDataURL('image/png');
+        img.classList.remove('raw');
+      }).catch(() => {});
+
+      // เปลี่ยนหน้าแบบค่อย ๆ จาง
+      const enter = document.getElementById('enter');
+      enter.addEventListener('click', e => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        e.preventDefault();
+        document.body.classList.add('leaving');
+        setTimeout(() => { location.href = enter.href; }, 450);
+      });
+      // กลับมาด้วยปุ่มย้อนกลับของเบราว์เซอร์ ให้หน้าแสดงตามปกติ
+      window.addEventListener('pageshow', () => document.body.classList.remove('leaving'));
+    })();
+  </script>
+</body>
+</html>

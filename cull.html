@@ -118,8 +118,16 @@
               <label class="switch"><input type="checkbox" id="enhOn"><i></i><span>เปิด</span></label>
             </div>
             <div class="wm-fields" id="enhFields">
+              <div class="set look-set">
+                <span>ลุคสี</span>
+                <div class="seg" id="enhLook" role="radiogroup">
+                  <button type="button" data-v="natural">ธรรมชาติ</button>
+                  <button type="button" data-v="bright">สว่างใส (Bright &amp; Clean)</button>
+                  <button type="button" data-v="cinematic">ซีเนมาติก (Cinematic)</button>
+                </div>
+              </div>
               <div class="set">
-                <span>ระดับการปรับ</span>
+                <span>ระดับการปรับแสงอัตโนมัติ</span>
                 <div class="seg" id="enhLevel" role="radiogroup">
                   <button type="button" data-v="low">อ่อน</button>
                   <button type="button" data-v="mid">ปานกลาง</button>
@@ -223,7 +231,18 @@
     </div>
     <button id="pvPrev" class="lb-nav lb-prev" type="button" aria-label="ภาพก่อนหน้า">&#8249;</button>
     <div class="lb-stage"><img id="pvImg" alt=""></div>
+    <div id="pvDetail" class="pv-detail"></div>
     <button id="pvNext" class="lb-nav lb-next" type="button" aria-label="ภาพถัดไป">&#8250;</button>
+  </div>
+
+  <div id="compare" class="lightbox cmp" hidden role="dialog" aria-modal="true" aria-label="เทียบภาพในกลุ่ม">
+    <div class="lb-top">
+      <span id="cmpTitle" class="pv-info"></span>
+      <div class="lb-actions">
+        <button id="cmpClose" class="lb-close" type="button" aria-label="ปิด">&times;</button>
+      </div>
+    </div>
+    <div id="cmpGrid" class="cmp-grid"></div>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -234,6 +253,7 @@
   <script src="js/enhance.js"></script>
   <script src="js/watermark.js"></script>
   <script src="js/heic.js"></script>
+  <script src="js/faces.js"></script>
   <script src="js/cull.js"></script>
 </body>
 </html>

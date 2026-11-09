@@ -6,6 +6,23 @@
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const LEVELS = { low: 0.5, mid: 0.8, high: 1 };
 
+  // ลุคสำเร็จรูป ใช้ต่อจากการปรับอัตโนมัติ (t = ค่าความสว่าง 0-1 ของแต่ละสี)
+  const LOOKS = {
+    natural: null,
+    // สว่างใส: ยกโทนกลางและเงาให้สว่างโปร่ง สีสดขึ้นเล็กน้อย ส่วนสีขาวให้ขาวสะอาด
+    bright: {
+      name: 'สว่างใส',
+      curve: t => { t = 1 - Math.pow(1 - t, 1.25); return t + 0.05 * Math.pow(1 - t, 3); },
+      sat: 0.07, cleanWhite: true
+    },
+    // ซีเนมาติก: คอนทราสต์แบบภาพยนตร์ เงาอมเขียวน้ำเงิน แสงอมส้ม ดำไม่สนิท สีหม่นลง ขอบภาพมืดเล็กน้อย
+    cinematic: {
+      name: 'ซีเนมาติก',
+      curve: t => { t += 0.3 * (t * t * (3 - 2 * t) - t); return 0.05 + t * 0.9; },
+      sat: -0.14, split: true, vignette: 0.24
+    }
+  };
+
   // วิเคราะห์จากภาพย่อ ผลจึงเหมือนกันทั้งภาพตัวอย่างและไฟล์ความละเอียดเต็ม
   function analyze(src, W, H) {
     const sc = Math.min(1, 320 / Math.max(W, H));
@@ -72,44 +89,77 @@
     return { gain, bp, wp, gamma, contrast, dMean: mF / n - m0 };
   }
 
-  function buildLuts(p, s) {
+  function buildLuts(p, s, look) {
     const L = [new Uint8ClampedArray(256), new Uint8ClampedArray(256), new Uint8ClampedArray(256)];
     for (let ch = 0; ch < 3; ch++) {
       for (let v = 0; v < 256; v++) {
         let t = clamp((v * p.gain[ch] - p.bp) / (p.wp - p.bp), 0, 1);
         t = Math.pow(t, p.gamma);
         t += p.contrast * (t * t * (3 - 2 * t) - t);
-        L[ch][v] = Math.round(v + (t * 255 - v) * s);
+        let out = v + (t * 255 - v) * s;
+        if (look) out = look.curve(clamp(out / 255, 0, 1)) * 255;
+        L[ch][v] = Math.round(out);
       }
     }
     return L;
   }
 
-  // ปรับภาพบน canvas ตรงนั้นเลย level = 'low' | 'mid' | 'high'
-  function apply(ctx, W, H, level) {
-    const s = LEVELS[level] || 0;
-    if (!s) return null;
+  // ปรับภาพบน canvas ตรงนั้นเลย
+  // opts = { level: 'low' | 'mid' | 'high', look: 'natural' | 'bright' | 'cinematic' } (หรือส่งแค่ระดับเป็นข้อความ)
+  function apply(ctx, W, H, opts) {
+    if (typeof opts === 'string') opts = { level: opts };
+    if (!opts) return null;
+    const s = LEVELS[opts.level] || 0;
+    const look = LOOKS[opts.look] || null;
+    if (!s && !look) return null;
     const p = analyze(ctx.canvas, W, H);
-    const [LR, LG, LB] = buildLuts(p, s);
+    const [LR, LG, LB] = buildLuts(p, s, look);
     const vib = 0.2 * s;
+    const lookSat = look ? look.sat : 0;
+    const clean = look && look.cleanWhite;
+    const split = look && look.split;
+    const vig = look && look.vignette ? look.vignette : 0;
+    // ระยะจากกลางภาพของแต่ละคอลัมน์ (ใช้ทำขอบภาพมืด)
+    const colD = vig ? Float32Array.from({ length: W }, (_, x) => ((x - W / 2) / (W / 2)) ** 2) : null;
     const band = Math.max(1, Math.floor(4e6 / W)); // ทำทีละแถบ ไม่กินหน่วยความจำมากกับรูปใหญ่
-    for (let y = 0; y < H; y += band) {
-      const h = Math.min(band, H - y);
-      const img = ctx.getImageData(0, y, W, h);
+    for (let y0 = 0; y0 < H; y0 += band) {
+      const h = Math.min(band, H - y0);
+      const img = ctx.getImageData(0, y0, W, h);
       const d = img.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const r = LR[d[i]], g = LG[d[i + 1]], b = LB[d[i + 2]];
-        const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
-        const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
-        const f = vib * (1 - (mx - mn) / 255); // เพิ่มสีให้ส่วนที่สีจืดมากกว่าส่วนที่สีจัดอยู่แล้ว
-        const l = (r + g + b) / 3;
-        d[i] = r + (r - l) * f;
-        d[i + 1] = g + (g - l) * f;
-        d[i + 2] = b + (b - l) * f;
+      for (let yy = 0, i = 0; yy < h; yy++) {
+        const rowD = vig ? ((y0 + yy - H / 2) / (H / 2)) ** 2 : 0;
+        for (let x = 0; x < W; x++, i += 4) {
+          let r = LR[d[i]], g = LG[d[i + 1]], b = LB[d[i + 2]];
+          const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+          const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+          const l = (r + g + b) / 3;
+          // สีสัน: เพิ่มให้ส่วนที่สีจืดมากกว่าส่วนที่สีจัดอยู่แล้ว + ค่าของลุค
+          let f = vib * (1 - (mx - mn) / 255) + lookSat;
+          if (clean && l > 200) f -= (l - 200) / 55 * 0.6; // ขาวสะอาด ไม่อมสี
+          r = l + (r - l) * (1 + f);
+          g = l + (g - l) * (1 + f);
+          b = l + (b - l) * (1 + f);
+          if (split) {
+            // เงาอมเขียวน้ำเงิน (teal) แสงอมส้ม (orange)
+            const lw = l / 255, sh = (1 - lw) * (1 - lw), hi = lw * lw;
+            r += -16 * sh + 14 * hi;
+            g += 4 * sh + 4 * hi;
+            b += 14 * sh - 16 * hi;
+          }
+          if (vig) {
+            const dd = Math.sqrt((colD[x] + rowD) / 2);
+            const k = clamp((dd - 0.45) / 0.55, 0, 1);
+            const m = 1 - vig * k * k * (3 - 2 * k);
+            r *= m; g *= m; b *= m;
+          }
+          d[i] = r; d[i + 1] = g; d[i + 2] = b;
+        }
       }
-      ctx.putImageData(img, 0, y);
+      ctx.putImageData(img, 0, y0);
     }
-    return describe(p);
+    const info = s ? describe(p) : [];
+    if (look) info.unshift('ลุค' + look.name);
+    return info;
   }
 
   // สรุปสิ่งที่ปรับเป็นคำอ่านง่าย
@@ -127,5 +177,5 @@
     return out;
   }
 
-  root.PCSKEnhance = { apply, analyze };
+  root.PCSKEnhance = { apply, analyze, LOOKS: Object.keys(LOOKS) };
 })(window);

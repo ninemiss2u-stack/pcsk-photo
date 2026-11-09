@@ -125,7 +125,7 @@
 .wm-block { padding: 10px 0; border-top: 1px solid var(--border); }
 /* จัดตัวเลือกเป็น 2 คอลัมน์ แผงจะได้ไม่สูงเกินไป */
 .wm-panel .wm-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px 18px; }
-.wm-panel .wm-fields .enh-note { grid-column: 1 / -1; }
+.wm-panel .wm-fields .enh-note, .wm-panel .wm-fields .look-set { grid-column: 1 / -1; }
 .wm-panel .wm-head { margin-bottom: 6px; }
 .wm-panel .seg button { padding: 4px 12px; font-size: .86rem; }
 .wm-preview { align-self: start; }
@@ -180,6 +180,26 @@
 .grp header strong { font-family: 'Prompt', sans-serif; font-weight: 600; color: var(--primary); }
 @media (prefers-color-scheme: dark) { .grp header strong { color: #9ccf78; } }
 .grp header span { font-size: .9rem; }
+.grp header .grp-cmp { margin-left: auto; }
+
+/* ---------- เทียบภาพในกลุ่ม ---------- */
+.cmp-grid { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 12px; padding: 0 16px 16px; align-content: start; }
+.cmp-cell { margin: 0; display: flex; flex-direction: column; background: #15190f; border: 3px solid transparent; border-radius: 12px; overflow: hidden; }
+.cmp-cell.keep { border-color: var(--keep); }
+.cmp-img { height: calc((100vh - 64px - var(--rows, 1) * 92px) / var(--rows, 1)); min-height: 200px; display: flex; align-items: center; justify-content: center; background: #000; cursor: pointer; }
+.cmp-img img { max-width: 100%; max-height: 100%; object-fit: contain; transition: opacity .15s; }
+.cmp-cell.drop .cmp-img img { opacity: .4; }
+.cmp-cell figcaption { color: #fff; padding: 8px 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: .88rem; }
+.cmp-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.cmp-btns { display: flex; gap: 6px; margin-left: auto; }
+.cmp-only { color: #fff; border-color: rgba(255, 255, 255, .35); }
+.cmp-only:hover { background: rgba(255, 255, 255, .12); }
+@media (max-width: 640px) {
+  .cmp-grid { grid-template-columns: minmax(0, 1fr); }
+  .cmp-img { height: auto; max-height: 62vh; }
+}
+
 .grp.single { background: transparent; box-shadow: none; padding: 6px 0; border-left: 0; }
 
 .cp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
@@ -198,6 +218,28 @@
 .bd { font-size: .7rem; font-weight: 600; padding: 0 6px; border-radius: 6px; color: #fff; }
 .bd.best { background: #a8841a; }
 .bd.warn { background: var(--danger); }
+.bd.minor { background: rgba(160, 110, 20, .92); }
+.review-note { margin: 0 0 10px; }
+
+/* ---------- คะแนน 5 ด้าน ---------- */
+.meters { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.meter { display: inline-flex; align-items: center; gap: 6px; font-size: .8rem; }
+.meter span { opacity: .85; white-space: nowrap; }
+.meter i { width: 64px; height: 6px; border-radius: 99px; background: rgba(255, 255, 255, .18); overflow: hidden; display: block; }
+.meter i b { display: block; height: 100%; border-radius: 99px; }
+.meter.good i b { background: #5cbf4c; }
+.meter.mid i b { background: #e0b23a; }
+.meter.low i b { background: #e5604f; }
+.meter em { font-style: normal; font-weight: 600; min-width: 22px; }
+.chips-i { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.chip-i { font-size: .78rem; padding: 1px 9px; border-radius: 99px; color: #fff; }
+.chip-i.warn { background: rgba(229, 96, 79, .9); }
+.chip-i.minor { background: rgba(190, 135, 30, .9); }
+.chip-i.good { background: rgba(70, 150, 60, .9); }
+.pv-detail { color: #fff; padding: 0 16px 12px; }
+.pv-detail:empty { display: none; }
+.cmp-detail { flex-basis: 100%; }
+.cmp-detail .meter i { width: 44px; }
 
 .export-bar {
   position: sticky; bottom: 0; z-index: 10; margin-top: 20px;

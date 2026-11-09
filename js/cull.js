@@ -21,13 +21,15 @@
     cancelled: false, skipped: null, failed: 0, total: 0
   };
   const WM_DEFAULT = { on: true, style: 'corner', pos: 'br', size: 'm', opacity: 85 };
-  const ENH_DEFAULT = { on: true, level: 'mid' };
+  const ENH_DEFAULT = { on: true, level: 'mid', look: 'natural' };
   try { Object.assign(state.settings, JSON.parse(localStorage.getItem('cull-settings') || '{}')); } catch (e) { /* ไม่มีที่เก็บก็ใช้ค่าเริ่มต้น */ }
   state.settings.wm = Object.assign({}, WM_DEFAULT, state.settings.wm);
   if (!WM.STYLES.includes(state.settings.wm.style)) state.settings.wm.style = WM_DEFAULT.style; // ค่าจากลายน้ำแบบเดิม
   state.settings.enh = Object.assign({}, ENH_DEFAULT, state.settings.enh);
+  if (!PCSKEnhance.LOOKS.includes(state.settings.enh.look)) state.settings.enh.look = 'natural';
+  delete state.settings.faces; // การคัดแบบมืออาชีพ (ตรวจใบหน้า) ทำงานทุกครั้ง ไม่มีให้ปิดแล้ว
   const wmOpts = () => (state.settings.wm.on ? state.settings.wm : null);
-  const enhLevel = () => (state.settings.enh.on ? state.settings.enh.level : null);
+  const enhOpts = () => (state.settings.enh.on ? { level: state.settings.enh.level, look: state.settings.enh.look } : null);
   const saveSettings = () => { try { localStorage.setItem('cull-settings', JSON.stringify(state.settings)); } catch (e) { /* ignore */ } };
 
   // ---------- helpers ----------
@@ -150,7 +152,7 @@
       return;
     }
     state.skipped = skipped;
-    analyzeAll(images);
+    return analyzeAll(images);
   }
 
   // แปลงไฟล์ HEIC จาก iPhone เป็น JPG ก่อนวิเคราะห์ (กดหยุดได้ ระบบจะใช้เฉพาะไฟล์ที่แปลงแล้ว)
@@ -262,6 +264,8 @@
     });
     state.failed = failed;
     state.total = total;
+    state.facesOff = false;
+    if (state.photos.length && !state.cancelled) await detectFaces();
 
     if (!state.photos.length) {
       show('stepStart');
@@ -272,6 +276,31 @@
     renderAll();
   }
   $('cancel').onclick = () => { state.cancelled = true; };
+
+  // ตรวจใบหน้าและคนหลับตา (ทำต่อจากการวิเคราะห์หลัก กดหยุดได้)
+  async function detectFaces() {
+    const P = state.photos, n = P.length;
+    $('pTitle').textContent = 'กำลังตรวจใบหน้าและคนหลับตา...';
+    $('pBar').style.width = '0%';
+    $('pText').textContent = 'กำลังโหลดตัวตรวจใบหน้า...';
+    $('pEta').textContent = '';
+    try { await PCSKFaces.load(); }
+    catch (e) {
+      console.warn('โหลดตัวตรวจใบหน้าไม่ได้', e);
+      toast('โหลดตัวตรวจใบหน้าไม่สำเร็จ (ต้องต่ออินเทอร์เน็ต) จึงคัดรูปโดยไม่ตรวจหลับตา', 'error');
+      state.facesOff = true;
+      return;
+    }
+    const t0 = performance.now();
+    for (let i = 0; i < n && !state.cancelled; i++) {
+      try { Object.assign(P[i], await PCSKFaces.analyze(P[i].file)); }
+      catch (e) { console.warn('ตรวจใบหน้าไม่ได้', P[i].name, e); }
+      $('pBar').style.width = ((i + 1) / n * 100) + '%';
+      $('pText').textContent = `ตรวจใบหน้าแล้ว ${num(i + 1)} จาก ${num(n)} รูป`;
+      const left = (performance.now() - t0) / (i + 1) * (n - i - 1) / 1000;
+      $('pEta').textContent = i > 1 && i < n - 1 ? (left > 90 ? `เหลือประมาณ ${Math.ceil(left / 60)} นาที` : `เหลือประมาณ ${Math.ceil(left)} วินาที`) : '';
+    }
+  }
 
   function resetResults() {
     state.photos.forEach(p => URL.revokeObjectURL(p.thumbUrl));
@@ -308,15 +337,12 @@
     const p90 = sharps[Math.min(sharps.length - 1, Math.floor(sharps.length * 0.9))];
     const lp90 = Math.log1p(p90) || 1;
 
+    // ความคมของใบหน้า เทียบกันภายในชุดเดียวกัน (เฉพาะภาพที่มีหน้าคน)
+    const fs = P.filter(p => p.mainFaces).map(p => p.faceSharp).sort((a, b) => a - b);
+    const lfp90 = fs.length ? Math.log1p(fs[Math.min(fs.length - 1, Math.floor(fs.length * 0.9))]) || 1 : 1;
+
     for (const p of P) {
-      const sharpN = Math.min(1, Math.log1p(p.focus) / lp90);
-      const exposure = clamp(1 - Math.abs(p.mean - 120) / 160 - p.clipHi * 2 - p.clipLo * 1.5, 0, 1);
-      const contrast = Math.min(1, p.std / 60);
-      const colorful = Math.min(1, p.colorful / 70);
-      p.score = Math.round(100 * (0.55 * sharpN + 0.25 * exposure + 0.1 * contrast + 0.1 * colorful));
-      p.blurry = P.length >= 5 && p.focus < med * 0.3; // คมน้อยกว่า 30% ของภาพส่วนใหญ่ในชุด
-      p.dark = p.mean < 50 || p.clipLo > 0.4;
-      p.bright = p.mean > 210 || p.clipHi > 0.25;
+      scorePro(p, { med, lp90, lfp90, n: P.length });
     }
 
     // จัดกลุ่มตามลำดับเวลาที่ถ่าย: ภาพที่คล้ายกับภาพล่าสุดในกลุ่มจะถูกรวมเข้ากลุ่มเดียวกัน
@@ -336,7 +362,7 @@
         p.best = g.length > 1 && ri === 0;
         let auto = true, reason = '';
         if (state.settings.dropBlur && p.blurry) { auto = false; reason = 'ภาพเบลอ'; }
-        else if (kept >= state.settings.keep) { auto = false; reason = 'ภาพซ้ำ มีภาพที่ดีกว่าในกลุ่มนี้'; }
+        else if (kept >= state.settings.keep) { auto = false; reason = p.closed ? 'มีคนหลับตา และมีภาพที่ดีกว่าในกลุ่มนี้' : 'ภาพซ้ำ มีภาพที่ดีกว่าในกลุ่มนี้'; }
         if (auto) kept++;
         p.auto = auto;
         p.reason = reason;
@@ -344,6 +370,95 @@
       });
     });
     state.groups = groups;
+  }
+
+  // ---------- ให้คะแนนแบบช่างภาพมืออาชีพ 5 ด้าน ----------
+  // คะแนนแต่ละด้าน 0-1 แล้วถ่วงน้ำหนักรวมเป็น 0-100 พร้อมรายการปัญหา (sev 2 = ควรตรวจ, 1 = เล็กน้อย) และจุดเด่น
+  function scorePro(p, ctx) {
+    const issues = [], goods = [];
+    // short = ป้ายสั้นบนรูปย่อ, text = คำอธิบายเต็มตอนดูภาพใหญ่
+    const SHORT = [['หน้าคนมืด', 'หน้ามืด'], ['หน้าคนสว่าง', 'หน้าสว่างจ้า'], ['โฟกัส', 'โฟกัสหลุด'], ['สั่นไหว', 'ภาพสั่น'], ['เอียง', 'ภาพเอียง'], ['ถูกตัด', 'หน้าถูกตัด'],
+      ['ชิดขอบ', 'ชิดขอบ'], ['เล็กมาก', 'ตัวแบบเล็ก'], ['หันหน้า', 'หันหน้าหนี'], ['พูด', 'อ้าปาก'], ['noise', 'noise สูง'], ['จ้า', 'แสงรบกวน']];
+    const add = (sev, text) => issues.push({ sev, text, short: (SHORT.find(([k]) => text.includes(k)) || [, text])[1] });
+    const deg = Math.abs(p.tilt || 0);
+
+    // 1) ความคมชัดและโฟกัส
+    const sharpN = Math.min(1, Math.log1p(p.focus) / ctx.lp90);
+    let focus = sharpN;
+    if (p.mainFaces) {
+      const faceN = Math.min(1, Math.log1p(p.faceSharp) / ctx.lfp90);
+      focus = 0.4 * sharpN + 0.6 * faceN; // หน้าคนชัดสำคัญกว่าฉากหลัง
+      // โฟกัสหลุด: หน้าคนเบลอกว่าภาพอื่นในชุดชัดเจน และฉากหลังชัดกว่าหน้ามาก
+      if (p.focusRatio < 0.05 && faceN < 0.5) { focus *= 0.6; add(2, 'โฟกัสไม่อยู่ที่ใบหน้า (ฉากหลังชัดกว่า)'); }
+      else if (faceN > 0.8) goods.push('หน้าคมชัด');
+    }
+    // เกรน/noise ทำให้ภาพดู "มีรายละเอียด" มากกว่าความจริง จึงหักออกจากคะแนนความคม
+    if (p.noise > 3) focus *= Math.max(0.3, 1 - (p.noise - 3) * 0.1);
+    p.blurry = ctx.n >= 5 && p.focus < ctx.med * 0.3; // คมน้อยกว่า 30% ของภาพส่วนใหญ่ในชุด
+    // ภาพสั่น: คมน้อยกว่าภาพส่วนใหญ่ในชุดมาก และรายละเอียดหายไปทิศเดียว (อาคาร/เส้นตรงที่คมปกติจะไม่ถูกนับ)
+    if (p.motion > 0.5 && p.focus < ctx.med * 0.4) { focus *= 0.75; add(2, 'ภาพสั่นไหว (กล้องหรือคนขยับ)'); }
+
+    // 2) แสง
+    let exposure = clamp(1 - Math.abs(p.mean - 120) / 160 - p.clipHi * 2 - p.clipLo * 1.5, 0, 1);
+    p.dark = p.mean < 50 || p.clipLo > 0.4;
+    p.bright = p.mean > 210 || p.clipHi > 0.25;
+    if (p.mainFaces && p.faceLum) {
+      // ภาพที่มีคน ช่างภาพดูแสงที่หน้าคนเป็นหลัก (ภาพพื้นหลังขาว/มืดแบบตั้งใจจึงไม่ถูกหักคะแนน)
+      const faceExp = clamp(1 - Math.max(0, Math.abs(p.faceLum - 140) - 40) / 80, 0, 1);
+      exposure = 0.7 * faceExp + 0.3 * exposure;
+      if (faceExp > 0.7) { p.dark = false; p.bright = false; }
+      else if (p.faceLum < 90) add(1, 'หน้าคนมืดเกินไป');
+      else if (p.faceLum > 200) add(1, 'หน้าคนสว่างจ้าเกินไป');
+    }
+    const light = clamp(0.75 * exposure + 0.15 * Math.min(1, p.std / 60) + 0.1 * Math.min(1, p.colorful / 70), 0, 1);
+
+    // 3) องค์ประกอบภาพ
+    let comp = 1;
+    // เตือนเฉพาะเมื่อมีเส้นตรงชัด (อาคาร เวที ขอบฟ้า) เอียงไปทางเดียวกัน และแทบไม่มีเส้นที่ตรงแนวเลย
+    if (p.tiltConf >= 0.3 && p.tiltVsLevel >= 3 && deg >= 1.5 && deg <= 12) {
+      comp -= Math.min(0.35, deg * 0.05);
+      add(deg >= 3 ? 2 : 1, `ภาพเอียงประมาณ ${deg.toFixed(1)}°`);
+    }
+    if (p.cutFaces) { comp -= 0.2 * Math.min(2, p.cutFaces); add(2, `หน้าคนถูกตัดที่ขอบภาพ ${p.cutFaces} คน`); }
+    const s = p.mainFaces ? p.faceCenter : p.subj;
+    if (s) {
+      // วางตัวแบบตรงกลาง หรือตามเส้นแบ่ง 3 ส่วน ถือว่าดี ชิดขอบเกินไปหักคะแนน
+      const pts = [[0.5, 0.5], [1 / 3, 1 / 3], [2 / 3, 1 / 3], [1 / 3, 2 / 3], [2 / 3, 2 / 3]];
+      const d = Math.min(...pts.map(([x, y]) => Math.hypot(s.x - x, s.y - y)));
+      if (d > 0.24) { comp -= 0.15; add(1, 'ตัวแบบอยู่ชิดขอบภาพ'); }
+      else if (p.mainFaces) goods.push('จัดวางตัวแบบดี');
+    }
+    if (p.mainFaces && p.faceSize < 0.04 && p.mainFaces <= 2) { comp -= 0.1; add(1, 'ตัวแบบเล็กมากในภาพ'); }
+    comp = clamp(comp, 0, 1);
+
+    // 4) ใบหน้าและท่าทาง
+    let face = null;
+    if (p.faces) {
+      const mf = p.mainFaces || p.faces;
+      face = 1 - 0.6 * (p.closed / p.faces) - 0.15 * (p.blink || 0) - 0.35 * ((p.lookAway || 0) / mf) - 0.15 * ((p.talking || 0) / mf) + 0.1 * Math.min(1, (p.smile || 0) * 1.5);
+      face = clamp(face, 0, 1);
+      if (p.lookAway) add(p.lookAway === mf ? 2 : 1, `หันหน้าหนีกล้อง ${p.lookAway} คน`);
+      if (p.talking) add(1, `อ้าปาก/กำลังพูด ${p.talking} คน`);
+      if (!p.closed) goods.push(p.faces > 1 ? 'ทุกคนลืมตา' : 'ลืมตา');
+      if ((p.smile || 0) > 0.45) goods.push('ยิ้ม');
+    }
+
+    // 5) สิ่งรบกวน
+    let clean = 1;
+    if (p.noise > 4) { clean -= Math.min(0.5, (p.noise - 4) * 0.08); add(p.noise > 7 ? 2 : 1, 'มีเกรน/noise สูง (ISO สูง)'); }
+    // จุดจ้าเฉพาะที่ขอบ (เช่น หน้าต่าง ไฟ) ไม่นับภาพพื้นหลังขาวทั้งภาพ ที่ตั้งใจถ่ายแบบสตูดิโอ
+    if (p.edgeGlare > 0.04 && p.edgeGlare < 0.3 && p.midGlare < 0.02 && p.edgeGlare > p.midGlare * 3) { clean -= 0.25; add(1, 'มีจุดสว่างจ้ารบกวนที่ขอบภาพ'); }
+    clean = clamp(clean, 0, 1);
+
+    const w = face === null
+      ? { focus: 0.42, light: 0.25, comp: 0.2, face: 0, clean: 0.13 }
+      : { focus: 0.32, light: 0.2, comp: 0.16, face: 0.22, clean: 0.1 };
+    p.parts = { focus, light, comp, face, clean };
+    p.score = Math.round(100 * (w.focus * focus + w.light * light + w.comp * comp + w.face * (face || 0) + w.clean * clean));
+    issues.sort((a, b) => b.sev - a.sev);
+    p.issues = issues;
+    p.goods = goods;
+    p.review = issues.some(i => i.sev >= 2) || p.closed > 0 || p.blurry;
   }
 
   // ---------- แสดงผล ----------
@@ -354,7 +469,8 @@
     return {
       all: P.length, kept, drop: P.length - kept,
       dupGroups: dupGroups.length, dupPhotos: dupGroups.reduce((a, g) => a + g.length, 0),
-      blurry: P.filter(p => p.blurry).length
+      blurry: P.filter(p => p.blurry).length,
+      review: P.filter(p => p.keep && p.review).length
     };
   }
 
@@ -369,7 +485,7 @@
     ].map(([label, n, extra]) => `<div class="stat ${extra === 'keep' || extra === 'drop' ? extra : ''}">
         <span>${label}</span><strong>${num(n)}</strong>${extra && extra !== 'keep' && extra !== 'drop' ? `<small>${extra}</small>` : ''}</div>`).join('');
 
-    const tabs = [['all', 'ทั้งหมด', c.all], ['dup', 'เฉพาะกลุ่มภาพซ้ำ', c.dupPhotos], ['keep', 'เก็บไว้', c.kept], ['drop', 'คัดออก', c.drop]];
+    const tabs = [['all', 'ทั้งหมด', c.all], ['dup', 'เฉพาะกลุ่มภาพซ้ำ', c.dupPhotos], ['keep', 'เก็บไว้', c.kept], ['review', 'ควรตรวจซ้ำ', c.review], ['drop', 'คัดออก', c.drop]];
     $('tabs').innerHTML = tabs.map(([f, label, n]) =>
       `<button type="button" role="tab" class="chip${state.filter === f ? ' on' : ''}" data-f="${f}" aria-selected="${state.filter === f}">${label} (${num(n)})</button>`).join('');
 
@@ -387,16 +503,45 @@
     if (state.failed) parts.push(`รูปที่เปิดไม่ได้ ${num(state.failed)} ไฟล์`);
     const notAnalyzed = state.total - state.photos.length - state.failed;
     if (notAnalyzed > 0) parts.push(`ยังไม่ได้วิเคราะห์ ${num(notAnalyzed)} รูป (กดหยุดไว้)`);
-    $('skipNote').textContent = parts.length ? 'ไม่ได้นำมาคัด: ' + parts.join(', ') : '';
+    let note = parts.length ? 'ไม่ได้นำมาคัด: ' + parts.join(', ') : '';
+    const unchecked = state.photos.filter(p => p.faces === undefined).length;
+    if (!state.facesOff && unchecked) note += (note ? ' · ' : '') + `ยังไม่ได้ตรวจใบหน้า ${num(unchecked)} รูป (กดหยุดไว้)`;
+    else if (state.facesOff) note += (note ? ' · ' : '') + 'ไม่ได้ตรวจใบหน้าและคนหลับตาในรอบนี้';
+    $('skipNote').textContent = note;
     $('rawWrap').hidden = !s.raw;
   }
 
-  function card(p) {
+  function badgesOf(p) {
     const badges = [];
     if (p.best) badges.push('<b class="bd best">ดีที่สุดในกลุ่ม</b>');
+    if (p.closed) badges.push(`<b class="bd warn">หลับตา ${p.closed} คน</b>`);
     if (p.blurry) badges.push('<b class="bd warn">เบลอ</b>');
     if (p.dark) badges.push('<b class="bd warn">มืด</b>');
     if (p.bright) badges.push('<b class="bd warn">สว่างเกิน</b>');
+    // ปัญหาจากการประเมินแบบมืออาชีพ แสดงไม่เกิน 2 อันที่สำคัญที่สุด
+    (p.issues || []).slice(0, 2).forEach(i => badges.push(`<b class="bd ${i.sev >= 2 ? 'warn' : 'minor'}" title="${esc(i.text)}">${esc(i.short)}</b>`));
+    return badges;
+  }
+
+  // แถบคะแนน 5 ด้าน + ปัญหา + จุดเด่น (ใช้ในหน้าดูภาพใหญ่และหน้าเทียบภาพ)
+  function detailHtml(p, compact) {
+    const P = p.parts || {};
+    const rows = [['โฟกัส/ความคม', P.focus], ['แสง', P.light], ['องค์ประกอบ', P.comp], ['ใบหน้า/ท่าทาง', P.face], ['สิ่งรบกวน', P.clean]]
+      .filter(([, v]) => v !== null && v !== undefined);
+    const bars = rows.map(([label, v]) => {
+      const pct = Math.round(v * 100);
+      const tone = pct >= 75 ? 'good' : pct >= 50 ? 'mid' : 'low';
+      return `<span class="meter ${tone}" title="${label} ${pct}/100"><span>${label}</span><i><b style="width:${pct}%"></b></i><em>${pct}</em></span>`;
+    }).join('');
+    const iss = (p.issues || []).map(i => `<span class="chip-i ${i.sev >= 2 ? 'warn' : 'minor'}">${esc(compact ? i.short : i.text)}</span>`);
+    if (p.closed) iss.unshift(`<span class="chip-i warn">หลับตา ${p.closed} คน</span>`);
+    if (p.blurry) iss.unshift('<span class="chip-i warn">เบลอ</span>');
+    const good = (p.goods || []).map(g => `<span class="chip-i good">${esc(g)}</span>`);
+    return `<div class="meters">${bars}</div><div class="chips-i">${iss.join('')}${good.join('')}</div>`;
+  }
+
+  function card(p) {
+    const badges = badgesOf(p);
     const tip = `${p.name} · คะแนน ${p.score}` + (!p.keep && p.reason ? ` · ${p.reason}` : '');
     return `<div class="cp ${p.keep ? 'keep' : 'drop'}" data-id="${p.id}" title="${esc(tip)}">
       <img src="${p.thumbUrl}" alt="${esc(p.name)}" loading="lazy" draggable="false">
@@ -413,9 +558,9 @@
     const grid = arr => { arr.forEach(p => view.push(p.id)); return `<div class="cp-grid">${arr.map(card).join('')}</div>`; };
     let html = '';
 
-    if (f === 'keep' || f === 'drop') {
-      const arr = [...state.photos].sort(byTime).filter(p => (f === 'keep' ? p.keep : !p.keep));
-      if (arr.length) html = grid(arr);
+    if (f === 'keep' || f === 'drop' || f === 'review') {
+      const arr = [...state.photos].sort(byTime).filter(p => (f === 'keep' ? p.keep : f === 'drop' ? !p.keep : p.keep && p.review));
+      if (arr.length) html = (f === 'review' ? '<p class="muted small review-note">ภาพที่ระบบเก็บไว้ แต่พบปัญหาสำคัญ เช่น โฟกัสหลุด ภาพสั่น หลับตา หน้าถูกตัด ลองเปิดดูภาพใหญ่ก่อนตัดสินใจ</p>' : '') + grid(arr);
     } else {
       let singles = [];
       let dupNo = 0;
@@ -430,7 +575,8 @@
         dupNo++;
         const k = g.filter(p => p.keep).length;
         html += `<section class="grp" data-g="${gi}"><header><strong>กลุ่มภาพซ้ำ ${dupNo}</strong>
-          <span class="muted">${g.length} รูป · ${fmtTime(g[0].time)} · เก็บไว้ <b class="gk">${k}</b> รูป</span></header>${grid(g)}</section>`;
+          <span class="muted">${g.length} รูป · ${fmtTime(g[0].time)} · เก็บไว้ <b class="gk">${k}</b> รูป</span>
+          <button type="button" class="btn btn-ghost btn-sm grp-cmp" data-g="${gi}">เทียบภาพในกลุ่ม</button></header>${grid(g)}</section>`;
       });
       flush();
     }
@@ -468,7 +614,7 @@
     $('holdCompare').hidden = !en.on && !w.on;
     const nKept = state.photos.filter(p => p.keep).length;
     $('wmPrev').hidden = $('wmNext').hidden = nKept < 2;
-    [['wmStyle', w.style], ['wmPos', w.pos], ['wmSize', w.size], ['enhLevel', en.level]].forEach(([id, v]) => {
+    [['wmStyle', w.style], ['wmPos', w.pos], ['wmSize', w.size], ['enhLevel', en.level], ['enhLook', en.look]].forEach(([id, v]) => {
       $(id).querySelectorAll('button').forEach(b => {
         b.classList.toggle('on', b.dataset.v === v);
         b.setAttribute('aria-checked', b.dataset.v === v);
@@ -488,7 +634,7 @@
     if (!p || !p.keep) p = kept[0];
     // กดค้างปุ่มเทียบ = แสดงภาพต้นฉบับ ไม่ปรับ ไม่มีลายน้ำ
     const opts = wmPv.holding ? null : wmOpts();
-    const enh = wmPv.holding ? null : enhLevel();
+    const enh = wmPv.holding ? null : enhOpts();
     $('pvTag').hidden = !wmPv.holding;
     const showInfo = info => {
       $('enhInfo').textContent = wmPv.holding ? '' : !enh ? '' : info && info.length
@@ -523,7 +669,7 @@
   const onWm = () => { saveSettings(); renderWmControls(); drawWmPreview(); drawSample(); };
   $('wmOn').onchange = () => { state.settings.wm.on = $('wmOn').checked; onWm(); };
   $('enhOn').onchange = () => { state.settings.enh.on = $('enhOn').checked; onWm(); };
-  [['wmStyle', 'wm', 'style'], ['wmPos', 'wm', 'pos'], ['wmSize', 'wm', 'size'], ['enhLevel', 'enh', 'level']].forEach(([id, group, key]) => {
+  [['wmStyle', 'wm', 'style'], ['wmPos', 'wm', 'pos'], ['wmSize', 'wm', 'size'], ['enhLevel', 'enh', 'level'], ['enhLook', 'enh', 'look']].forEach(([id, group, key]) => {
     $(id).addEventListener('click', e => {
       const b = e.target.closest('button[data-v]');
       if (!b) return;
@@ -568,6 +714,8 @@
   }
 
   $('list').addEventListener('click', e => {
+    const cb = e.target.closest('.grp-cmp');
+    if (cb) return openCompare(+cb.dataset.g);
     const el = e.target.closest('.cp');
     if (!el) return;
     const p = state.byId.get(+el.dataset.id);
@@ -620,8 +768,10 @@
     full.src = url;
     const notes = [];
     if (p.best) notes.push('ดีที่สุดในกลุ่ม');
+    if (p.faces) notes.push(p.closed ? `${p.faces} หน้า หลับตา ${p.closed} คน` : `${p.faces} หน้า ลืมตาครบ`);
     if (!p.keep && p.reason) notes.push(p.reason);
     $('pvInfo').textContent = `${pv.idx + 1}/${state.view.length} · ${p.name} · ${fmtTime(p.time)} · คะแนน ${p.score}` + (notes.length ? ' · ' + notes.join(', ') : '');
+    $('pvDetail').innerHTML = detailHtml(p, false);
     const t = $('pvToggle');
     t.textContent = p.keep ? '✓ เก็บไว้ (กดเพื่อคัดออก)' : '✕ คัดออก (กดเพื่อเก็บ)';
     t.className = 'btn btn-sm ' + (p.keep ? 'btn-keep' : 'btn-light');
@@ -646,6 +796,61 @@
     else if (e.key === 'ArrowRight') pvStep(1);
     else if (e.key === ' ' || e.key.toLowerCase() === 'k') { e.preventDefault(); pvToggle(); }
   });
+
+  // ---------- เทียบภาพในกลุ่มแบบข้างกัน ----------
+  const cmp = { gi: null, urls: [] };
+  function openCompare(gi) {
+    const g = [...state.groups[gi]].sort(byTime);
+    cmp.gi = gi;
+    cmp.urls = g.map(p => URL.createObjectURL(p.file));
+    const n = g.length, cols = n <= 2 ? n : n <= 4 ? 2 : 3;
+    const grid = $('cmpGrid');
+    grid.style.setProperty('--cols', cols);
+    grid.style.setProperty('--rows', Math.min(Math.ceil(n / cols), 2));
+    grid.innerHTML = g.map((p, i) => `<figure class="cmp-cell" data-id="${p.id}">
+        <div class="cmp-img" title="คลิกเพื่อสลับ เก็บ / คัดออก"><img src="${cmp.urls[i]}" alt="${esc(p.name)}"></div>
+        <figcaption></figcaption></figure>`).join('');
+    renderCompare();
+    $('compare').hidden = false;
+    document.body.classList.add('no-scroll');
+  }
+  function renderCompare() {
+    const g = state.groups[cmp.gi];
+    if (!g) return closeCompare();
+    const k = g.filter(p => p.keep).length;
+    $('cmpTitle').textContent = `เทียบภาพในกลุ่ม · ${g.length} รูป · เก็บไว้ ${k} รูป · คลิกที่ภาพเพื่อสลับ เก็บ / คัดออก`;
+    $('cmpGrid').querySelectorAll('.cmp-cell').forEach(el => {
+      const p = state.byId.get(+el.dataset.id);
+      el.className = 'cmp-cell ' + (p.keep ? 'keep' : 'drop');
+      el.querySelector('figcaption').innerHTML = `
+        <span class="cmp-name">${esc(p.name)} · คะแนน ${p.score}</span>
+        <div class="cmp-detail">${detailHtml(p, true)}</div>
+        <span class="cmp-btns">
+          <button type="button" class="btn btn-sm ${p.keep ? 'btn-keep' : 'btn-light'}" data-act="toggle">${p.keep ? '✓ เก็บ' : '✕ คัดออก'}</button>
+          <button type="button" class="btn btn-sm btn-ghost cmp-only" data-act="only">เก็บภาพนี้ภาพเดียว</button>
+        </span>`;
+    });
+  }
+  function closeCompare() {
+    $('compare').hidden = true;
+    $('cmpGrid').innerHTML = '';
+    cmp.urls.forEach(u => URL.revokeObjectURL(u));
+    cmp.urls = [];
+    cmp.gi = null;
+    document.body.classList.remove('no-scroll');
+  }
+  $('cmpGrid').addEventListener('click', e => {
+    const cell = e.target.closest('.cmp-cell');
+    if (!cell) return;
+    const p = state.byId.get(+cell.dataset.id);
+    const act = e.target.closest('[data-act]');
+    if (act && act.dataset.act === 'only') state.groups[cmp.gi].forEach(q => { if (q.keep !== (q.id === p.id)) setKeep(q, q.id === p.id); });
+    else if (act || e.target.closest('.cmp-img')) setKeep(p, !p.keep);
+    else return;
+    renderCompare();
+  });
+  $('cmpClose').onclick = closeCompare;
+  document.addEventListener('keydown', e => { if (!$('compare').hidden && e.key === 'Escape') closeCompare(); });
 
   // ---------- บันทึกรูปที่เก็บไว้ ----------
   function exportItems() {
@@ -682,7 +887,7 @@
     const used = new Set();
     let done = 0;
     // ใช้ค่าตั้งค่า ณ ตอนกดบันทึก ทุกรูปในชุดจึงได้ลายน้ำแบบเดียวกันแม้มีการปรับค่าระหว่างบันทึก
-    const wm = wmOpts() ? Object.assign({}, wmOpts()) : null, enh = enhLevel();
+    const wm = wmOpts() ? Object.assign({}, wmOpts()) : null, enh = enhOpts();
     const asIs = []; // รูปที่ปรับ/ใส่ลายน้ำไม่ได้ จึงคัดลอกต้นฉบับไปแทน
     const totalFiles = items.reduce((a, it) => a + (it.raw ? 2 : 1), 0);
     for (const it of items) {

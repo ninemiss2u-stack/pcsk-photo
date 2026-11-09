@@ -2,9 +2,9 @@
 
 ระบบคัดรูป ปรับแต่งภาพ และใส่ลายน้ำ สำหรับภาพกิจกรรม **โรงเรียนประชาสงเคราะห์วิทยา จังหวัดพิษณุโลก** (งานประชาสัมพันธ์)
 
-## 🔗 [เปิดใช้งาน PCSK PHOTO](https://ninemiss2u-stack.github.io/pcsk-photo/)
+## 🔗 [เปิดใช้งาน PCSK PHOTO](https://pcskphotoselection.vercel.app/)
 
-https://ninemiss2u-stack.github.io/pcsk-photo/ (เปิดด้วย Google Chrome หรือ Microsoft Edge บนคอมพิวเตอร์)
+https://pcskphotoselection.vercel.app/ (เปิดด้วย Google Chrome หรือ Microsoft Edge บนคอมพิวเตอร์)
 
 ทุกอย่างทำงานในเบราว์เซอร์บนเครื่องของผู้ใช้ **ไม่มีการส่งรูปขึ้นอินเทอร์เน็ต** และไม่แก้ไขไฟล์ในเมมโมรี่การ์ด
 
@@ -25,7 +25,7 @@ https://ninemiss2u-stack.github.io/pcsk-photo/ (เปิดด้วย Google 
 
 ## วิธีใช้
 
-**แบบออนไลน์** เปิด https://ninemiss2u-stack.github.io/pcsk-photo/ ด้วย Chrome หรือ Edge
+**แบบออนไลน์** เปิด https://pcskphotoselection.vercel.app/ ด้วย Chrome หรือ Edge
 
 **แบบในเครื่อง (Windows)** ดาวน์โหลดโปรเจกต์ (ปุ่ม Code > Download ZIP) แตกไฟล์ แล้วเปิด PowerShell ในโฟลเดอร์นั้น
 

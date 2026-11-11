@@ -245,6 +245,17 @@
     <div id="cmpGrid" class="cmp-grid"></div>
   </div>
 
+  <div id="saveSheet" class="lightbox save-sheet" hidden role="dialog" aria-modal="true" aria-labelledby="saveTitle">
+    <div class="save-card">
+      <button id="saveClose" class="save-x" type="button" aria-label="ปิด">&times;</button>
+      <h3 id="saveTitle"></h3>
+      <p class="muted small" id="saveHint"></p>
+      <button class="btn btn-block" id="saveShare" type="button"></button>
+      <button class="btn btn-block" id="saveEach" type="button"></button>
+      <button class="btn btn-ghost btn-block" id="saveZip" type="button"></button>
+    </div>
+  </div>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>

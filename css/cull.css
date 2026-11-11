@@ -253,6 +253,14 @@
 .pv-info { font-size: .9rem; opacity: .9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; margin-right: 12px; }
 .lb-top { gap: 8px; }
 
+/* ---------- เลือกวิธีบันทึก (มือถือ) ---------- */
+.save-sheet { background: rgba(8, 10, 14, .6); align-items: center; justify-content: center; padding: 16px; }
+.save-card { position: relative; width: min(420px, 100%); max-height: 100%; overflow: auto; background: var(--surface); color: var(--text); border-radius: var(--radius); border-top: 3px solid var(--gold); box-shadow: 0 12px 40px rgba(0, 0, 0, .35); padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.save-card h3 { margin: 0 32px 0 0; color: var(--primary); }
+.save-card p { margin: 0 0 4px; }
+.save-card .btn[hidden] { display: none; }
+.save-x { position: absolute; top: 8px; right: 10px; background: none; border: 0; color: var(--muted); font-size: 1.7rem; line-height: 1; cursor: pointer; padding: 4px 8px; }
+
 /* ---------- ท้ายเว็บ ---------- */
 .site-footer { background: var(--primary-deep); color: #e3ecd8; border-top: 3px solid var(--gold); padding: 18px 0; font-size: .9rem; }
 .footer-inner { display: flex; align-items: center; gap: 14px; }

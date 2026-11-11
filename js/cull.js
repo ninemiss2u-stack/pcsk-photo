@@ -600,10 +600,11 @@
   const wmPv = { id: null, bmp: null, busy: null, holding: false };
   function exportLabel() {
     const w = state.settings.wm.on, e = state.settings.enh.on;
+    const where = window.showDirectoryPicker ? 'ลงโฟลเดอร์' : ''; // มือถือเลือกโฟลเดอร์ไม่ได้
     if (w && e) return 'ปรับภาพ ใส่ลายน้ำ และบันทึก';
-    if (w) return 'ใส่ลายน้ำและบันทึกลงโฟลเดอร์';
-    if (e) return 'ปรับภาพและบันทึกลงโฟลเดอร์';
-    return 'บันทึกรูปที่เก็บไว้ลงโฟลเดอร์';
+    if (w) return 'ใส่ลายน้ำและบันทึก' + where;
+    if (e) return 'ปรับภาพและบันทึก' + where;
+    return 'บันทึกรูปที่เก็บไว้' + where;
   }
   function renderWmControls() {
     const w = state.settings.wm, en = state.settings.enh;
@@ -913,6 +914,133 @@
   }
   const asIsNote = r => (r.asIs.length ? ` · ${num(r.asIs.length)} รูปปรับภาพไม่ได้ จึงบันทึกต้นฉบับแทน: ${r.asIs.slice(0, 3).join(', ')}${r.asIs.length > 3 ? ' ...' : ''}` : '');
 
+  // ---------- บันทึกแบบไม่มีโฟลเดอร์ปลายทาง (มือถือ) ----------
+  const save = { files: [], batches: [], bi: 0, busy: false };
+  const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const ZIP_MAX = 1.5e9;
+
+  // แบ่งชุดสำหรับเมนูแชร์ของเครื่อง: Chrome บน Android รับได้ครั้งละไม่เกิน 10 ไฟล์ / 50 MB
+  function shareBatches(files) {
+    const maxN = IS_IOS ? 20 : 10, maxB = IS_IOS ? 200e6 : 45e6;
+    const out = [];
+    let cur = [], bytes = 0;
+    for (const f of files) {
+      if (cur.length && (cur.length >= maxN || bytes + f.size > maxB)) { out.push(cur); cur = []; bytes = 0; }
+      cur.push(f);
+      bytes += f.size;
+    }
+    if (cur.length) out.push(cur);
+    return out;
+  }
+  function canShareAll(batches) {
+    if (!navigator.share || !navigator.canShare) return false;
+    try { return batches.every(b => navigator.canShare({ files: b })); } catch (e) { return false; }
+  }
+  function saveLabels() {
+    const n = save.batches.length, cur = save.batches[save.bi]; // cur ว่างเมื่อส่งครบทุกชุดแล้ว
+    $('saveShare').textContent = n > 1 && cur ? `บันทึกลงเครื่อง ชุดที่ ${num(save.bi + 1)}/${num(n)} (${num(cur.length)} ไฟล์)` : 'บันทึกลงเครื่อง';
+    $('saveEach').textContent = 'ดาวน์โหลดแยกทีละไฟล์';
+    $('saveZip').textContent = 'รวมเป็นไฟล์ .zip ไฟล์เดียว';
+  }
+  function openSave(files) {
+    const size = files.reduce((a, f) => a + f.size, 0);
+    save.files = files;
+    save.batches = shareBatches(files);
+    save.bi = 0;
+    const share = canShareAll(save.batches);
+    $('saveTitle').textContent = `พร้อมบันทึก ${num(files.length)} ไฟล์ (${fmtSize(size)})`;
+    $('saveShare').hidden = !share;
+    $('saveZip').hidden = !window.JSZip || size > ZIP_MAX;
+    // จอสัมผัสใช้เมนูแชร์เป็นหลัก (เลือก "บันทึกรูปภาพ" เพื่อเข้าอัลบั้ม) คอมพิวเตอร์ใช้การดาวน์โหลด
+    const shareFirst = share && (IS_IOS || matchMedia('(pointer: coarse)').matches);
+    $('saveShare').classList.toggle('btn-ghost', !shareFirst);
+    $('saveEach').classList.toggle('btn-ghost', shareFirst);
+    $('saveHint').textContent = share
+      ? (save.batches.length > 1
+        ? `"บันทึกลงเครื่อง" จะเปิดเมนูแชร์ของเครื่อง ให้เลือก "บันทึกรูปภาพ" หรือแอปแกลเลอรี โดยแบ่งเป็น ${num(save.batches.length)} ชุด กดปุ่มซ้ำจนครบ`
+        : '"บันทึกลงเครื่อง" จะเปิดเมนูแชร์ของเครื่อง ให้เลือก "บันทึกรูปภาพ" หรือแอปแกลเลอรี')
+      : 'ไฟล์จะถูกบันทึกแยกทีละรูปลงโฟลเดอร์ดาวน์โหลด หากเบราว์เซอร์ถามเรื่องดาวน์โหลดหลายไฟล์ ให้กด "อนุญาต"';
+    saveLabels();
+    $('saveSheet').hidden = false;
+    document.body.classList.add('no-scroll');
+  }
+  function closeSave() {
+    if (save.busy) return;
+    $('saveSheet').hidden = true;
+    document.body.classList.remove('no-scroll');
+    save.files = [];
+    save.batches = [];
+  }
+  function saveBusy(on) {
+    save.busy = on;
+    ['saveShare', 'saveEach', 'saveZip'].forEach(id => { $(id).disabled = on; });
+    if (!on) saveLabels();
+  }
+  function download(blob, name) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  }
+  const saveFail = e => { console.error(e); toast('บันทึกไม่สำเร็จ: ' + ((e && e.message) || e), 'error'); };
+
+  $('saveShare').onclick = async () => {
+    if (save.busy) return;
+    saveBusy(true);
+    try {
+      await navigator.share({ files: save.batches[save.bi] });
+      save.bi++;
+      if (save.bi >= save.batches.length) {
+        const n = save.files.length;
+        saveBusy(false);
+        closeSave();
+        toast(`ส่งออกครบ ${num(n)} ไฟล์แล้ว`);
+        return;
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') { console.error(e); toast('เปิดเมนูแชร์ไม่สำเร็จ ลองใช้ "ดาวน์โหลดแยกทีละไฟล์" แทน', 'error'); }
+    }
+    saveBusy(false);
+  };
+  $('saveEach').onclick = async () => {
+    if (save.busy) return;
+    saveBusy(true);
+    try {
+      const n = save.files.length;
+      for (let i = 0; i < n; i++) {
+        $('saveEach').textContent = `กำลังดาวน์โหลด ${num(i + 1)}/${num(n)}`;
+        download(save.files[i], save.files[i].name);
+        await new Promise(r => setTimeout(r, 350)); // เว้นจังหวะ ไม่ให้เบราว์เซอร์ทิ้งไฟล์ที่สั่งถี่เกินไป
+      }
+      saveBusy(false);
+      closeSave();
+      toast(`ดาวน์โหลดแล้ว ${num(n)} ไฟล์ ดูได้ในโฟลเดอร์ดาวน์โหลดของเครื่อง`);
+      return;
+    } catch (e) { saveFail(e); }
+    saveBusy(false);
+  };
+  $('saveZip').onclick = async () => {
+    if (save.busy) return;
+    saveBusy(true);
+    try {
+      $('saveZip').textContent = 'กำลังสร้างไฟล์ .zip...';
+      const zip = new JSZip();
+      save.files.forEach(f => zip.file(f.name, f));
+      const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
+      download(blob, state.settings.wm.on ? 'PCSK-PHOTO.zip' : 'รูปที่คัดแล้ว.zip');
+      saveBusy(false);
+      closeSave();
+      return;
+    } catch (e) { saveFail(e); }
+    saveBusy(false);
+  };
+  $('saveClose').onclick = closeSave;
+  $('saveSheet').addEventListener('click', e => { if (e.target === $('saveSheet')) closeSave(); });
+  document.addEventListener('keydown', e => { if (!$('saveSheet').hidden && e.key === 'Escape') closeSave(); });
+
   $('exportBtn').onclick = async () => {
     const items = exportItems();
     if (!items.length) return;
@@ -939,26 +1067,12 @@
         const extra = [state.settings.enh.on && 'ปรับแสงและสีแล้ว', state.settings.wm.on && 'มีลายน้ำ PCSK PHOTO'].filter(Boolean).join(' ');
         toast(`บันทึกแล้ว ${num(r.total)} ไฟล์${extra ? ` (${extra})` : ''} ลงโฟลเดอร์ "${dir.name}"${asIsNote(r)}`, r.asIs.length ? 'error' : '');
       } else {
-        // เบราว์เซอร์ที่ไม่รองรับการเลือกโฟลเดอร์: รวมเป็นไฟล์ .zip
-        const size = items.reduce((a, it) => a + it.file.size + (it.raw ? it.raw.size : 0), 0);
-        if (size > 1.5e9) {
-          toast(`รูปที่เลือกมีขนาด ${fmtSize(size)} ใหญ่เกินกว่าจะรวมเป็น .zip ได้ กรุณาใช้ Chrome หรือ Edge`, 'error');
-          return;
-        }
-        if (!window.JSZip) throw new Error('โหลดเครื่องมือบีบอัดไฟล์ไม่สำเร็จ');
-        const zip = new JSZip();
-        const write = async (name, file) => { zip.file(name, file); };
+        // เบราว์เซอร์ที่เลือกโฟลเดอร์ไม่ได้ (มือถือ, Firefox, Safari): เตรียมไฟล์แยกทีละรูป แล้วให้เลือกวิธีบันทึก
+        const files = [];
+        const write = async (name, data) => { files.push(new File([data], name, { type: data.type || '' })); };
         const r = await writeAll(items, write, progress);
+        openSave(files);
         if (r.asIs.length) toast(asIsNote(r).slice(3), 'error');
-        btn.textContent = 'กำลังสร้างไฟล์ .zip...';
-        const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = state.settings.wm.on ? 'PCSK-PHOTO.zip' : 'รูปที่คัดแล้ว.zip';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
       }
     } catch (e) {
       console.error(e);
